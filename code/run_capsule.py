@@ -15,7 +15,7 @@ from aind_smartspim_classification.utils import utils
 
 def get_data_config(
     data_folder: str,
-    processing_manifest_path: str = "segmentation_processing_manifest.json",
+    processing_manifest_path: str = "segmentation_processing_manifest*",
     data_description_path: str = "data_description.json",
 ) -> Tuple:
     """
@@ -87,7 +87,7 @@ def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict):
     """
 
     default_config["input_channel"] = f"{pipeline_config['segmentation']['channel']}.zarr"
-    default_config["background_channel"] = f"{pipeline_config['segmentation']['channel']}.zarr"
+    default_config["background_channel"] = f"{pipeline_config['registration']['channel']}.zarr"
     default_config["channel"] = pipeline_config["segmentation"]["channel"]
     default_config["input_scale"] = pipeline_config["segmentation"]["input_scale"]
     default_config["chunk_size"] = int(pipeline_config["segmentation"]["chunksize"])
