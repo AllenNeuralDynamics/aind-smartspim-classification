@@ -16,12 +16,10 @@ from datetime import datetime
 from glob import glob
 from pathlib import Path
 
-import dask
 import dask.array as da
 import keras.backend as K
 import numpy as np
 from aind_data_schema.core.processing import DataProcess, ProcessName
-from dask.distributed import Client, LocalCluster, performance_report
 from imlib.IO.cells import get_cells, save_cells
 from natsort import natsorted
 from ng_link import NgState
@@ -228,7 +226,7 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
 
     data_processes.append(
         DataProcess(
-            name=ProcessName.IMAGE_CELL_SEGMENTATION,
+            name=ProcessName.IMAGE_CELL_CLASSIFICATION,
             software_version=__version__,
             start_date_time=start_date_time,
             end_date_time=end_date_time,
@@ -240,6 +238,7 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
             parameters={
                 "chunk_step": chunk_step,
                 "image_path": str(image_path),
+                "background_path": str(background_path),
                 "mask_path": str(mask_path),
                 "smartspim_cell_config": smartspim_config,
             },

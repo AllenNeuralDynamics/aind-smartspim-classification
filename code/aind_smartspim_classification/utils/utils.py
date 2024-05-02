@@ -7,7 +7,6 @@ Created on Mon Nov 28 12:23:13 2022
 @Modified by: camilo.laiton
 """
 
-import importlib
 import json
 import logging
 import multiprocessing
@@ -15,23 +14,18 @@ import os
 import platform
 import time
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import dask
-import dask.array as da
 import matplotlib.pyplot as plt
 import numpy as np
 import psutil
 from aind_data_schema.core.processing import DataProcess, PipelineProcess, Processing
-from astropy.stats import SigmaClip
 
 from cellfinder_core.classify.cube_generator import CubeGeneratorFromFile
-from cellfinder_core.detect import detect
-from cellfinder_core.classify import classify
 from imlib.IO.cells import save_cells, get_cells
-from photutils.background import Background2D
 from scipy import ndimage as ndi
-from scipy.signal import argrelmin, medfilt2d
+from scipy.signal import argrelmin
 
 from .._shared.types import ArrayLike, PathLike
 
@@ -48,6 +42,33 @@ def run_classify(
 ):
     """
     Function to run cellfinder classification
+    
+    Parameters
+    ----------
+    signal : ArrayLike
+        dask array of signal channel
+    background : ArrayLike
+        dask array of bakcground channel
+    save_path : PathLike
+        path to where model output will be saved
+    count : int
+        the block that is being classified
+    offset: tuple
+        the x, y, z coordinates the current block is offset by
+    classify_config: dict
+        parameterization for classification model
+    level: int
+        the zarr level that the model is classifying on
+    padding: int
+        the padding that is added to each block to account for edge cells
+    model: 
+        the model that is being used
+
+    Returns
+    -------
+    out: str
+        information on the classified block
+    
     """
 
     try:
