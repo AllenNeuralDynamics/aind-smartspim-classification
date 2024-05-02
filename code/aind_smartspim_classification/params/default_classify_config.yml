@@ -1,0 +1,11 @@
+# Leave blank to use defaults
+mask_scale: 3
+cellfinder_params:
+  'n_free_cpus': 15
+  'batch_size': 32
+  'voxel_sizes': [2, 1.8, 1.8]
+  'network_voxel_sizes': [2, 1.8, 1.8]
+  'cube_width': 14 
+  'cube_height': 14
+  'cube_depth': 26
+  'network_depth': '18'
