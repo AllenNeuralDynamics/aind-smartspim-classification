@@ -151,7 +151,7 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
     # get quality blocks using mask
     chunks = [int(np.ceil(x / chunk_step)) for x in signal_array.shape]
     good_blocks = utils.find_good_blocks(
-        mask_array, chunks, chunk_step, smartspim_config["mask_scale"]
+        mask_array, chunks, chunk_step, smartspim_config["mask_scale"] - smartspim_config['downsample']
     )
 
     rechunk_size = [axis * (chunk_step // axis) for axis in signal_array.chunksize]
