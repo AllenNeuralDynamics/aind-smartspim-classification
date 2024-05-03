@@ -1,5 +1,6 @@
 # Leave blank to use defaults
 mask_scale: 3
+downsample: 1
 cellfinder_params:
   'n_free_cpus': 15
   'batch_size': 32

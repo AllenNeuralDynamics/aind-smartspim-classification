@@ -32,6 +32,7 @@ from .._shared.types import ArrayLike, PathLike
 def run_classify(
     signal: ArrayLike,
     background: ArrayLike,
+    cell_path: PathLike,
     save_path: PathLike,
     count: int,
     offset: int,
@@ -49,6 +50,8 @@ def run_classify(
         dask array of signal channel
     background : ArrayLike
         dask array of bakcground channel
+    cell_path : PathLike
+        path to where cell XMLs from segmentation are located
     save_path : PathLike
         path to where model output will be saved
     count : int
@@ -72,10 +75,11 @@ def run_classify(
     """
 
     try:
-        cell_path = os.path.join(save_path, f"cells_block_{str(count)}.xml")
+        cell_path = os.path.join(cell_path, f"cells_block_{str(count)}.xml")
         cells = get_cells(cell_path)
     except:
         out = f"Block {count} had no cells"
+        print(out)
         return out
         
     offset_cells = []

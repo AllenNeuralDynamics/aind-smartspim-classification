@@ -157,6 +157,9 @@ def run():
     ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}"
     default_config[
         "metadata_path"
+    ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
+    default_config[
+        "cell_path"
     ] = f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
     default_config[
         "cellfinder_params"
@@ -170,7 +173,6 @@ def run():
     )
 
     smartspim_config["name"] = smartspim_dataset_name
-    smartspim_config["downsample"] = 1
 
     print("Final cell classification config: ", smartspim_config)
 
