@@ -447,7 +447,7 @@ def main(
         smartspim_config["channel"],
         classified_cells_path,
         smartspim_config["save_path"],
-        smartspim_config["cellfinder_params"]["voxel_sizes"],
+        smartspim_config["ng_voxel_sizes"],
         logger,
     )
 

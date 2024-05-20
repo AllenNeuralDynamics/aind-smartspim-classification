@@ -1,6 +1,7 @@
 # Leave blank to use defaults
 mask_scale: 3
 downsample: 1
+ng_voxel_sizes: [2, 1.8, 1.8]
 cellfinder_params:
   'n_free_cpus': 15
   'batch_size': 32
