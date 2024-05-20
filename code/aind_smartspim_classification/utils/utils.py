@@ -32,8 +32,7 @@ from .._shared.types import ArrayLike, PathLike
 def run_classify(
     signal: ArrayLike,
     background: ArrayLike,
-    cell_path: PathLike,
-    save_path: PathLike,
+    metadata_path: PathLike,
     count: int,
     offset: int,
     classify_config: dict,
@@ -50,10 +49,8 @@ def run_classify(
         dask array of signal channel
     background : ArrayLike
         dask array of bakcground channel
-    cell_path : PathLike
-        path to where cell XMLs from segmentation are located
-    save_path : PathLike
-        path to where model output will be saved
+    metadata_path : PathLike
+        path to where cell XMLs from segmentation are located and will be saved
     count : int
         the block that is being classified
     offset: tuple
@@ -75,7 +72,7 @@ def run_classify(
     """
 
     try:
-        cell_path = os.path.join(cell_path, f"cells_block_{str(count)}.xml")
+        cell_path = os.path.join(metadata_path, f"cells_block_{str(count)}.xml")
         cells = get_cells(cell_path)
     except:
         out = f"Block {count} had no cells"
@@ -85,7 +82,9 @@ def run_classify(
     offset_cells = []
     for cell in cells:
         
-        x, y, z = cell.x/2**level - offset[0] + padding, cell.y/2**level - offset[1] + padding, cell.z/2**level - offset[2] + padding
+        x = cell.x/2**level - offset[0] + padding
+        y = cell.y/2**level - offset[1] + padding
+        z = cell.z/2**level - offset[2] + padding
         cell.x = int(round(x))
         cell.y = int(round(y))
         cell.z = int(round(z))
@@ -129,7 +128,7 @@ def run_classify(
             offset_class.append(cell)
     
     out = f"Block {count} classified {len(offset_class)} cells from {len(cells)} objects."
-    save_cells(offset_class, os.path.join(save_path, f"classified_block_{str(count)}.xml"))
+    save_cells(offset_class, os.path.join(metadata_path, f"classified_block_{str(count)}.xml"))
 
     return out
 

@@ -206,7 +206,6 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
         out = utils.run_classify(
             signal,
             background,
-            smartspim_config["cell_path"],
             smartspim_config["metadata_path"],
             count,
             offset,

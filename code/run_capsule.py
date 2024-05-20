@@ -4,6 +4,7 @@ in code ocean
 """
 
 import os
+import shutil
 from glob import glob
 from pathlib import Path
 from typing import List, Tuple
@@ -87,7 +88,7 @@ def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict):
     """
 
     default_config["input_channel"] = f"{pipeline_config['segmentation']['channel']}.zarr"
-    default_config["background_channel"] = f"{pipeline_config['registration']['channel']}.zarr"
+    default_config["background_channel"] = f"{pipeline_config['segmentation']['background_channel']}.zarr"
     default_config["channel"] = pipeline_config["segmentation"]["channel"]
     default_config["input_scale"] = pipeline_config["segmentation"]["input_scale"]
     default_config["chunk_size"] = int(pipeline_config["segmentation"]["chunksize"])
@@ -159,11 +160,15 @@ def run():
         "metadata_path"
     ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
     default_config[
-        "cell_path"
-    ] = f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
-    default_config[
         "cellfinder_params"
     ]["trained_model"] = f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
+    
+    
+    #want to shutil segmentation data to results folder
+    shutil.copytree(
+        f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/",
+        f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/"
+    )
     
     print("Initial cell classification config: ", default_config)
 
