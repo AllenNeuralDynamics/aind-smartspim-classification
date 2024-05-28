@@ -121,9 +121,9 @@ def run_classify(
     for idx, cell in enumerate(inference_generator.ordered_points):
         cell.type = predictions[idx] + 1
         if cell.type == 2:
-            cell.x = cell.x + offset[0] - padding
-            cell.y = cell.y + offset[1] - padding
-            cell.z = cell.z + offset[2] - padding
+            cell.x = (cell.x + offset[0] - padding) * 2**level
+            cell.y = (cell.y + offset[1] - padding) * 2**level
+            cell.z = (cell.z + offset[2] - padding) * 2**level
             
             offset_class.append(cell)
     
