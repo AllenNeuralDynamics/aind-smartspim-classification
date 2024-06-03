@@ -226,7 +226,7 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
 
     data_processes.append(
         DataProcess(
-            name=ProcessName.IMAGE_CELL_CLASSIFICATION,
+            name=ProcessName.IMAGE_CELL_SEGMENTATION,
             software_version=__version__,
             start_date_time=start_date_time,
             end_date_time=end_date_time,
