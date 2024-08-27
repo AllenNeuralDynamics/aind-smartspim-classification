@@ -19,6 +19,7 @@ from typing import List, Optional
 import dask
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import psutil
 from aind_data_schema.core.processing import DataProcess, PipelineProcess, Processing
 
@@ -103,7 +104,7 @@ def run_classify(
         cube_depth=classify_config['cube_depth'],
         )
 
-    predictions = model.predict(
+    predictions_raw = model.predict(
         inference_generator,
         use_multiprocessing=False,
         workers=1,
@@ -111,26 +112,32 @@ def run_classify(
         callbacks=None,
     )
         
-    predictions = predictions.round()
+    predictions = predictions_raw.round()
     predictions = predictions.astype("uint16")
 
     predictions = np.argmax(predictions, axis=1)
     offset_class = []
+    cell_likelihood = []
 
     # only go through the "extractable" points
     for idx, cell in enumerate(inference_generator.ordered_points):
         cell.type = predictions[idx] + 1
+        cell.x = (cell.x + offset[0] - padding) * 2**level
+        cell.y = (cell.y + offset[1] - padding) * 2**level
+        cell.z = (cell.z + offset[2] - padding) * 2**level
+        
         if cell.type == 2:
-            cell.x = (cell.x + offset[0] - padding) * 2**level
-            cell.y = (cell.y + offset[1] - padding) * 2**level
-            cell.z = (cell.z + offset[2] - padding) * 2**level
-            
             offset_class.append(cell)
-    
-    out = f"Block {count} classified {len(offset_class)} cells from {len(cells)} objects."
+            
+        cell_likelihood.append(
+            [cell.x, cell.y, cell.z, cell.type, predictions[idx][1]]
+        )
+        
+    df = pd.DataFrame(cell_likelihood, columns = ['X', 'Y', 'Z', 'Class', 'Cell Likelihood'])
+    df.to_csv(os.path.join(metadata_path, f"classified_block_{str(count)}.csv"))
     save_cells(offset_class, os.path.join(metadata_path, f"classified_block_{str(count)}.xml"))
-
-    return out
+    
+    return
 
 def find_good_blocks(img, counts, chunk, ds=3):
     """

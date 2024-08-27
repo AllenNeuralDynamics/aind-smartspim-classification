@@ -19,6 +19,7 @@ from pathlib import Path
 import dask.array as da
 import keras.backend as K
 import numpy as np
+import pandas as pd
 from aind_data_schema.core.processing import DataProcess, ProcessName
 from imlib.IO.cells import get_cells, save_cells
 from natsort import natsorted
@@ -203,7 +204,7 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
             mode="reflect"
         )
 
-        out = utils.run_classify(
+        utils.run_classify(
             signal,
             background,
             smartspim_config["metadata_path"],
@@ -242,16 +243,16 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
                 "mask_path": str(mask_path),
                 "smartspim_cell_config": smartspim_config,
             },
-            notes=f"Segmenting channel in path: {image_path}",
+            notes=f"Classifying channel in path: {image_path}",
         )
     )
 
     return str(image_path), data_processes
 
 
-def merge(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
+def merge_xml(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
     """
-    Saves list of all cells
+    Saves list of all classified cells to XML
     """
 
     # load temporary files and save to a single list
@@ -271,6 +272,27 @@ def merge(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
         cells=cells,
         xml_file_path=os.path.join(save_path, "classified_cells.xml"),
     )
+    
+def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
+    """
+    Saves list of all cell locations and likelihoods to CSV
+    """
+
+    # load temporary files and save to a single list
+    logger.info(f"Reading CSVs from cells path: {metadata_path}")
+    cells = []
+    tmp_files = glob(metadata_path + "/classified_block_*.csv")
+    
+
+    for f in natsorted(tmp_files):
+        try:
+            cells.append(pd.read_csv(f, index_col=0))
+        except:
+            pass
+
+    # save list of all cells
+    df = pd.concat(cells)
+    df.to_csv(os.path.join(save_path, 'cell_likelihoods.csv'))
 
 def generate_neuroglancer_link(
     image_path: str,
@@ -431,8 +453,9 @@ def main(
     # run cell detection
     image_path, data_processes = cell_classification(smartspim_config=smartspim_config, logger=logger)
 
-    # merge block .xmls into single file
-    merge(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
+    # merge block .xmls and .csvs into single file
+    merge_xml(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
+    merge_csv(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
 
     # Generating neuroglancer precomputed format
     classified_cells_path = os.path.join(smartspim_config["save_path"], "classified_cells.xml")
