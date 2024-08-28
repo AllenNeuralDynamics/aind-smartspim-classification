@@ -157,6 +157,7 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
 
     rechunk_size = [axis * (chunk_step // axis) for axis in signal_array.chunksize]
     signal_array = signal_array.rechunk(tuple(rechunk_size))
+    background_array = background_array.rechunk(tuple(rechunk_size))
     logger.info(f"Rechunk dask array to {signal_array.chunksize}.")
 
     all_blocks = signal_array.to_delayed().ravel()
