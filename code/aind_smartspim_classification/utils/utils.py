@@ -130,14 +130,16 @@ def run_classify(
             offset_class.append(cell)
             
         cell_likelihood.append(
-            [cell.x, cell.y, cell.z, cell.type, predictions[idx][1]]
+            [cell.x, cell.y, cell.z, cell.type, predictions_raw[idx][1]]
         )
         
     df = pd.DataFrame(cell_likelihood, columns = ['X', 'Y', 'Z', 'Class', 'Cell Likelihood'])
     df.to_csv(os.path.join(metadata_path, f"classified_block_{str(count)}.csv"))
     save_cells(offset_class, os.path.join(metadata_path, f"classified_block_{str(count)}.xml"))
     
-    return
+    out = f"Classified {len(offset_cless)} Cells in block {count}."
+
+    return out
 
 def find_good_blocks(img, counts, chunk, ds=3):
     """

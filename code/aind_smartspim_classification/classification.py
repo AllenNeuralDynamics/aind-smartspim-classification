@@ -205,7 +205,7 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
             mode="reflect"
         )
 
-        utils.run_classify(
+        out = utils.run_classify(
             signal,
             background,
             smartspim_config["metadata_path"],
