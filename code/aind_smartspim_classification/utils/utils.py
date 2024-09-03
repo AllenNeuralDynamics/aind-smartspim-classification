@@ -137,7 +137,7 @@ def run_classify(
     df.to_csv(os.path.join(metadata_path, f"classified_block_{str(count)}.csv"))
     save_cells(offset_class, os.path.join(metadata_path, f"classified_block_{str(count)}.xml"))
     
-    out = f"Classified {len(offset_cless)} Cells in block {count}."
+    out = f"Classified {len(offset_class)} Cells in block {count}."
 
     return out
 
