@@ -6,12 +6,11 @@ Created on Thu Dec  8 15:06:14 2022
 Module for the classification of smartspim datasets
 """
 
+import gc
 import json
 import logging
 import multiprocessing
 import os
-import gc
-import psutil
 from datetime import datetime
 from glob import glob
 from pathlib import Path
@@ -20,7 +19,10 @@ import dask.array as da
 import keras.backend as K
 import numpy as np
 import pandas as pd
+import psutil
 from aind_data_schema.core.processing import DataProcess, ProcessName
+from cellfinder_core.classify.tools import get_model
+from cellfinder_core.train.train_yml import models
 from imlib.IO.cells import get_cells, save_cells
 from natsort import natsorted
 from ng_link import NgState
@@ -30,10 +32,8 @@ from .__init__ import __version__
 from ._shared.types import PathLike
 from .utils import utils
 
-from cellfinder_core.classify.tools import get_model
-from cellfinder_core.train.train_yml import models
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 def __read_zarr_image(image_path: PathLike):
     """
@@ -89,7 +89,6 @@ def calculate_offsets(blocks, chunk_size):
 
 
 def cell_classification(smartspim_config: dict, logger: logging.Logger):
-
     image_path = Path(smartspim_config["input_data"]).joinpath(
         f"{smartspim_config['input_channel']}/{smartspim_config['downsample']}"
     )
@@ -117,9 +116,7 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
     data_processes = []
     logger.info(f"Image to process: {image_path}")
 
-    logger.info(
-        f"Starting classification with array {signal_array}"
-    )
+    logger.info(f"Starting classification with array {signal_array}")
 
     data_processes.append(
         DataProcess(
@@ -141,9 +138,11 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
 
     # get proper chunking for classification
     if smartspim_config["chunk_size"] % 64 == 0:
-        chunk_step = int(512/2**smartspim_config['downsample']) 
-    elif smartspim_config["chunk_size"] == 1 or smartspim_config["chunk_size"] % 250 == 0:
-        chunk_step = int(500/2**smartspim_config['downsample'])
+        chunk_step = int(512 / 2 ** smartspim_config["downsample"])
+    elif (
+        smartspim_config["chunk_size"] == 1 or smartspim_config["chunk_size"] % 250 == 0
+    ):
+        chunk_step = int(500 / 2 ** smartspim_config["downsample"])
 
     logger.info(
         f"z-plane chunk size: {smartspim_config['chunk_size']}. Processing with chunk size: {chunk_step}."
@@ -152,7 +151,10 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
     # get quality blocks using mask
     chunks = [int(np.ceil(x / chunk_step)) for x in signal_array.shape]
     good_blocks = utils.find_good_blocks(
-        mask_array, chunks, chunk_step, smartspim_config["mask_scale"] - smartspim_config['downsample']
+        mask_array,
+        chunks,
+        chunk_step,
+        smartspim_config["mask_scale"] - smartspim_config["downsample"],
     )
 
     rechunk_size = [axis * (chunk_step // axis) for axis in signal_array.chunksize]
@@ -164,7 +166,17 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
     all_bkg_blocks = background_array.to_delayed().ravel()
     all_offsets = calculate_offsets(signal_array.numblocks, signal_array.chunksize)
 
-    blocks, bkg_blocks, offsets, counts, = [], [], [], []
+    (
+        blocks,
+        bkg_blocks,
+        offsets,
+        counts,
+    ) = (
+        [],
+        [],
+        [],
+        [],
+    )
 
     for c, gb in good_blocks.items():
         if gb:
@@ -172,38 +184,27 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
             bkg_blocks.append(all_bkg_blocks[c])
             offsets.append(all_offsets[c])
             counts.append(c)
-    
+
     padding = (
-        int(
-            np.ceil((smartspim_config['cellfinder_params']['cube_depth'] + 1) / 2)
-        ),
-        int(
-            np.ceil((smartspim_config['cellfinder_params']['cube_depth'] + 1) / 2)
-        )
+        int(np.ceil((smartspim_config["cellfinder_params"]["cube_depth"] + 1) / 2)),
+        int(np.ceil((smartspim_config["cellfinder_params"]["cube_depth"] + 1) / 2)),
     )
 
     process = psutil.Process(os.getpid())
 
     for sig, bkg, offset, count in zip(blocks, bkg_blocks, offsets, counts):
-
         model = get_model(
-            existing_model=smartspim_config['cellfinder_params']['trained_model'],
+            existing_model=smartspim_config["cellfinder_params"]["trained_model"],
             model_weights=None,
-            network_depth=models[smartspim_config['cellfinder_params']['network_depth']],
+            network_depth=models[
+                smartspim_config["cellfinder_params"]["network_depth"]
+            ],
             inference=True,
         )
 
-        signal = np.pad(
-            sig.compute(),
-            padding,
-            mode="reflect"
-        )
+        signal = np.pad(sig.compute(), padding, mode="reflect")
 
-        background = np.pad(
-            bkg.compute(), 
-            padding,
-            mode="reflect"
-        )
+        background = np.pad(bkg.compute(), padding, mode="reflect")
 
         out = utils.run_classify(
             signal,
@@ -211,16 +212,16 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
             smartspim_config["metadata_path"],
             count,
             offset,
-            smartspim_config['cellfinder_params'],
-            smartspim_config['downsample'],
+            smartspim_config["cellfinder_params"],
+            smartspim_config["downsample"],
             padding[0],
-            model
-            )
+            model,
+        )
 
         del model
         K.clear_session()
         gc.collect()
-            
+
         memory_usage = process.memory_info().rss / 1024**3
         print(f"Currently using {memory_usage} GB of RAM")
 
@@ -260,7 +261,6 @@ def merge_xml(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     logger.info(f"Reading XMLS from cells path: {metadata_path}")
     cells = []
     tmp_files = glob(metadata_path + "/classified_block_*.xml")
-    
 
     for f in natsorted(tmp_files):
         try:
@@ -273,7 +273,8 @@ def merge_xml(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
         cells=cells,
         xml_file_path=os.path.join(save_path, "classified_cells.xml"),
     )
-    
+
+
 def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
     """
     Saves list of all cell locations and likelihoods to CSV
@@ -283,7 +284,6 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     logger.info(f"Reading CSVs from cells path: {metadata_path}")
     cells = []
     tmp_files = glob(metadata_path + "/classified_block_*.csv")
-    
 
     for f in natsorted(tmp_files):
         try:
@@ -293,8 +293,9 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
 
     # save list of all cells
     df = pd.concat(cells)
-    df = df.reset_index(drop = True)
-    df.to_csv(os.path.join(save_path, 'cell_likelihoods.csv'))
+    df = df.reset_index(drop=True)
+    df.to_csv(os.path.join(save_path, "cell_likelihoods.csv"))
+
 
 def generate_neuroglancer_link(
     image_path: str,
@@ -453,14 +454,18 @@ def main(
     profile_process.start()
 
     # run cell detection
-    image_path, data_processes = cell_classification(smartspim_config=smartspim_config, logger=logger)
+    image_path, data_processes = cell_classification(
+        smartspim_config=smartspim_config, logger=logger
+    )
 
     # merge block .xmls and .csvs into single file
     merge_xml(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
     merge_csv(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
 
     # Generating neuroglancer precomputed format
-    classified_cells_path = os.path.join(smartspim_config["save_path"], "classified_cells.xml")
+    classified_cells_path = os.path.join(
+        smartspim_config["save_path"], "classified_cells.xml"
+    )
     image_path = os.path.abspath(
         f"{smartspim_config['input_data']}/{smartspim_config['input_channel']}"
     )

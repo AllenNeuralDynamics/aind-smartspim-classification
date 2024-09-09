@@ -27,9 +27,13 @@ class SegParams(ArgSchema):
         }
     )
 
-    input_channel = Str(metadata={"required": True, "description": "Channel to segment"})
+    input_channel = Str(
+        metadata={"required": True, "description": "Channel to segment"}
+    )
 
-    input_scale = Int(metadata={"required": True, "description": "Zarr scale to start with"})
+    input_scale = Int(
+        metadata={"required": True, "description": "Zarr scale to start with"}
+    )
 
     chunk_size = Int(
         metadata={

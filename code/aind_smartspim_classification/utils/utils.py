@@ -21,14 +21,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import psutil
-from aind_data_schema.core.processing import DataProcess, PipelineProcess, Processing
-
+from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
+                                              Processing)
 from cellfinder_core.classify.cube_generator import CubeGeneratorFromFile
-from imlib.IO.cells import save_cells, get_cells
+from imlib.IO.cells import get_cells, save_cells
 from scipy import ndimage as ndi
 from scipy.signal import argrelmin
 
 from .._shared.types import ArrayLike, PathLike
+
 
 def run_classify(
     signal: ArrayLike,
@@ -39,11 +40,11 @@ def run_classify(
     classify_config: dict,
     level: int,
     padding: int,
-    model
+    model,
 ):
     """
     Function to run cellfinder classification
-    
+
     Parameters
     ----------
     signal : ArrayLike
@@ -62,14 +63,14 @@ def run_classify(
         the zarr level that the model is classifying on
     padding: int
         the padding that is added to each block to account for edge cells
-    model: 
+    model:
         the model that is being used
 
     Returns
     -------
     out: str
         information on the classified block
-    
+
     """
 
     try:
@@ -79,30 +80,29 @@ def run_classify(
         out = f"Block {count} had no cells"
         print(out)
         return out
-        
+
     offset_cells = []
     for cell in cells:
-        
-        x = cell.x/2**level - offset[0] + padding
-        y = cell.y/2**level - offset[1] + padding
-        z = cell.z/2**level - offset[2] + padding
+        x = cell.x / 2**level - offset[0] + padding
+        y = cell.y / 2**level - offset[1] + padding
+        z = cell.z / 2**level - offset[2] + padding
         cell.x = int(round(x))
         cell.y = int(round(y))
         cell.z = int(round(z))
-       
+
         offset_cells.append(cell)
 
     inference_generator = CubeGeneratorFromFile(
         points=offset_cells,
         signal_array=signal,
         background_array=background,
-        voxel_sizes=classify_config['voxel_sizes'],
-        network_voxel_sizes=classify_config['network_voxel_sizes'],
-        batch_size=classify_config['batch_size'],
-        cube_width=classify_config['cube_width'],
-        cube_height=classify_config['cube_height'],
-        cube_depth=classify_config['cube_depth'],
-        )
+        voxel_sizes=classify_config["voxel_sizes"],
+        network_voxel_sizes=classify_config["network_voxel_sizes"],
+        batch_size=classify_config["batch_size"],
+        cube_width=classify_config["cube_width"],
+        cube_height=classify_config["cube_height"],
+        cube_depth=classify_config["cube_depth"],
+    )
 
     predictions_raw = model.predict(
         inference_generator,
@@ -111,7 +111,7 @@ def run_classify(
         verbose=True,
         callbacks=None,
     )
-        
+
     predictions = predictions_raw.round()
     predictions = predictions.astype("uint16")
 
@@ -125,21 +125,26 @@ def run_classify(
         cell.x = (cell.x + offset[0] - padding) * 2**level
         cell.y = (cell.y + offset[1] - padding) * 2**level
         cell.z = (cell.z + offset[2] - padding) * 2**level
-        
+
         if cell.type == 2:
             offset_class.append(cell)
-            
+
         cell_likelihood.append(
             [cell.x, cell.y, cell.z, cell.type, predictions_raw[idx][1]]
         )
-        
-    df = pd.DataFrame(cell_likelihood, columns = ['X', 'Y', 'Z', 'Class', 'Cell Likelihood'])
+
+    df = pd.DataFrame(
+        cell_likelihood, columns=["X", "Y", "Z", "Class", "Cell Likelihood"]
+    )
     df.to_csv(os.path.join(metadata_path, f"classified_block_{str(count)}.csv"))
-    save_cells(offset_class, os.path.join(metadata_path, f"classified_block_{str(count)}.xml"))
-    
+    save_cells(
+        offset_class, os.path.join(metadata_path, f"classified_block_{str(count)}.xml")
+    )
+
     out = f"Classified {len(offset_class)} Cells in block {count}."
 
     return out
+
 
 def find_good_blocks(img, counts, chunk, ds=3):
     """
@@ -521,7 +526,9 @@ def print_system_information(logger: logging.Logger):
     logger.info(f"{sep} Boot Time {sep}")
     boot_time_timestamp = psutil.boot_time()
     bt = datetime.fromtimestamp(boot_time_timestamp)
-    logger.info(f"Boot Time: {bt.year}/{bt.month}/{bt.day} {bt.hour}:{bt.minute}:{bt.second}")
+    logger.info(
+        f"Boot Time: {bt.year}/{bt.month}/{bt.day} {bt.hour}:{bt.minute}:{bt.second}"
+    )
 
     # CPU info
     logger.info(f"{sep} CPU Info {sep}")
