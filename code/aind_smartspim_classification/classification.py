@@ -293,6 +293,7 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
 
     # save list of all cells
     df = pd.concat(cells)
+    df = df.reset_index(drop = True)
     df.to_csv(os.path.join(save_path, 'cell_likelihoods.csv'))
 
 def generate_neuroglancer_link(
