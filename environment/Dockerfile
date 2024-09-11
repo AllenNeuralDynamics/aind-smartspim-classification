@@ -14,7 +14,7 @@ RUN conda create -n cell_seg python=3.8
 SHELL ["conda", "run", "-n", "cell_seg", "/bin/bash", "-c"]
 
 RUN apt-get update
-RUN apt-get -y install gcc g++
+RUN apt-get -y install gcc g++ libcublas-12-0
 
 RUN pip install -U --no-cache-dir \
     git+https://github.com/camilolaiton/cellfinder-core.git@block_seg \

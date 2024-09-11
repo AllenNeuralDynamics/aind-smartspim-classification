@@ -51,10 +51,16 @@ def get_data_config(
     print(f"Manifest Path: {data_folder}/{processing_manifest_path}")
 
     try:
-        derivatives_dict = utils.read_json_as_dict(glob(f"{data_folder}/{processing_manifest_path}")[0])
+        derivatives_dict = utils.read_json_as_dict(
+            glob(f"{data_folder}/{processing_manifest_path}")[0]
+        )
     except:
-        derivatives_dict = utils.read_json_as_dict(glob(f"{data_folder}/processing_manifest_*")[0])
-    data_description_dict = utils.read_json_as_dict(f"{data_folder}/{data_description_path}")
+        derivatives_dict = utils.read_json_as_dict(
+            glob(f"{data_folder}/processing_manifest_*")[0]
+        )
+    data_description_dict = utils.read_json_as_dict(
+        f"{data_folder}/{data_description_path}"
+    )
 
     smartspim_dataset = data_description_dict["name"]
 
@@ -87,13 +93,18 @@ def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict):
         Dictionary with the combined parameters
     """
 
-    default_config["input_channel"] = f"{pipeline_config['segmentation']['channel']}.zarr"
-    default_config["background_channel"] = f"{pipeline_config['segmentation']['background_channel']}.zarr"
+    default_config[
+        "input_channel"
+    ] = f"{pipeline_config['segmentation']['channel']}.zarr"
+    default_config[
+        "background_channel"
+    ] = f"{pipeline_config['segmentation']['background_channel']}.zarr"
     default_config["channel"] = pipeline_config["segmentation"]["channel"]
     default_config["input_scale"] = pipeline_config["segmentation"]["input_scale"]
     default_config["chunk_size"] = int(pipeline_config["segmentation"]["chunksize"])
 
     return default_config
+
 
 def validate_capsule_inputs(input_elements: List[str]) -> List[str]:
     """
@@ -140,17 +151,23 @@ def run():
     missing_files = validate_capsule_inputs(required_input_elements)
 
     if len(missing_files):
-        raise ValueError(f"We miss the following files in the capsule input: {missing_files}")
+        raise ValueError(
+            f"We miss the following files in the capsule input: {missing_files}"
+        )
 
     pipeline_config, smartspim_dataset_name = get_data_config(data_folder=data_folder)
 
     # get default configs
     default_config = get_yaml(
-        os.path.abspath("aind_smartspim_classification/params/default_classify_config.yml")
+        os.path.abspath(
+            "aind_smartspim_classification/params/default_classify_config.yml"
+        )
     )
 
     # add paths to default_config
-    default_config["input_data"] = os.path.abspath(pipeline_config["segmentation"]["input_data"])
+    default_config["input_data"] = os.path.abspath(
+        pipeline_config["segmentation"]["input_data"]
+    )
     print("Files in path: ", os.listdir(default_config["input_data"]))
 
     default_config[
@@ -159,17 +176,16 @@ def run():
     default_config[
         "metadata_path"
     ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
-    default_config[
-        "cellfinder_params"
-    ]["trained_model"] = f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
-    
-    
-    #want to shutil segmentation data to results folder
+    default_config["cellfinder_params"][
+        "trained_model"
+    ] = f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
+
+    # want to shutil segmentation data to results folder
     shutil.copytree(
         f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/",
-        f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/"
+        f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/",
     )
-    
+
     print("Initial cell classification config: ", default_config)
 
     # combine configs
@@ -187,6 +203,7 @@ def run():
         intermediate_segmented_folder=Path(scratch_folder),
         smartspim_config=smartspim_config,
     )
+
 
 if __name__ == "__main__":
     run()
