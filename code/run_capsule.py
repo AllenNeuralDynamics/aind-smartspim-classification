@@ -95,7 +95,7 @@ def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict):
 
     default_config[
         "input_channel"
-    ] = f"{pipeline_config['segmentation']['channel']}.zarr"
+    ] = f"{pipeline_config['segmentation']['channel']}.ome.zarr"
     default_config[
         "background_channel"
     ] = f"{pipeline_config['segmentation']['background_channel']}.zarr"
