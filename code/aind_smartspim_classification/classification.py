@@ -296,6 +296,36 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     df = df.reset_index(drop=True)
     df.to_csv(os.path.join(save_path, "cell_likelihoods.csv"))
 
+def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
+    """
+    Takes the cell_likelihoods.csv and creates a cumulative metric
+    """
+
+    logger.info(f"Reading cell likelihood CSV from cells path: {save_path}")
+
+    df = pd.read_csv(
+        os.path.join(save_path, 'cell_likelihoods.csv'),
+        index_col = 0
+    )
+
+    df_cells = df.loc[df['Class'] == 2, :]
+    df_non_cells = df.loc[df['Class'] == 1, :]
+    
+    likelihood_metrics = {
+        "Cell Counts": len(df_cells),
+        "Cell Likelihood Mean": df_cells['Cell Likelihood'].mean(),
+        "Cell Likelihood STD": df_cells['Cell Likelihood'].std(),
+        "Noncell Counts": len(df_non_cells),
+        "Noncell Likelihood Mean": df_non_cells['Cell Likelihood'].mean(),
+        "Noncell Likelihood STD": df_non_cells['Cell Likelihood'].std(),
+    }
+
+    df_out = pd.DataFrame(likelihood_metrics, index=['Metrics'])
+    df_out.to_csv(
+        os.path.join(save_path, "cell_likelihood_metrics.csv")
+    )
+
+    return
 
 def generate_neuroglancer_link(
     image_path: str,
@@ -461,6 +491,9 @@ def main(
     # merge block .xmls and .csvs into single file
     merge_xml(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
     merge_csv(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
+
+    # generate cumulative metrics
+    cumulative_likelihoods(smartspim_config["save_path"], logger)
 
     # Generating neuroglancer precomputed format
     classified_cells_path = os.path.join(

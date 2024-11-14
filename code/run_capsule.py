@@ -4,6 +4,7 @@ in code ocean
 """
 
 import os
+import sys
 import shutil
 from glob import glob
 from pathlib import Path
@@ -132,6 +133,16 @@ def validate_capsule_inputs(input_elements: List[str]) -> List[str]:
 
     return missing_inputs
 
+def get_detection_data(results_folder, dataset, channel, bucket = 'aind-open-data'):
+
+    s3_path = f"s3://{bucket}/{dataset}/image_cell_segmentation/{channel}/"
+
+    # Copying final processing manifest
+    for out in utils.execute_command_helper(
+        f"aws s3 cp {s3_path} {results_folder}/cell_{channel}/ --recursive"
+    ):
+        print(out)
+
 
 def run():
     """
@@ -158,11 +169,33 @@ def run():
     pipeline_config, smartspim_dataset_name = get_data_config(data_folder=data_folder)
 
     # get default configs
-    default_config = get_yaml(
-        os.path.abspath(
-            "aind_smartspim_classification/params/default_classify_config.yml"
+    mode = str(sys.argv[1:])
+    mode = mode.replace("[", "").replace("]", "").casefold()
+
+    print(f"Classification mode: {mode}")
+    
+    if "nuclei" in mode:
+        default_config = get_yaml(
+            os.path.abspath(
+                "aind_smartspim_classification/params/default_classify_config.yml"
+            )
         )
-    )
+        default_config["cellfinder_params"][
+            "trained_model"
+        ] = f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
+
+    elif "cytosolic":
+        default_config = get_yaml(
+            os.path.abspath(
+                "aind_smartspim_classification/params/cytosolic_classify_config.yml"
+            )
+        )
+
+        default_config["cellfinder_params"][
+            "trained_model"
+        ] = f"{data_folder}/cytosolic_model/2024_10_09_smartspim_18_cytosolic.h5"
+    else:
+        raise NotImplementedError(f"The mode {mode} has not been implemented")
 
     # add paths to default_config
     default_config["input_data"] = os.path.abspath(
@@ -173,18 +206,25 @@ def run():
     default_config[
         "save_path"
     ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}"
-    default_config[
-        "metadata_path"
-    ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
-    default_config["cellfinder_params"][
-        "trained_model"
-    ] = f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
 
-    # want to shutil segmentation data to results folder
-    shutil.copytree(
-        f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/",
-        f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/",
-    )
+    # want to shutil segmentation data to results folder if detection was run
+    default_config[
+            "metadata_path"
+        ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
+
+
+    if 'classify' in mode:
+        get_detection_data(
+            results_folder=results_folder,
+            dataset=smartspim_dataset_name,
+            channel=pipeline_config['segmentation']['channel']
+        )
+
+    if 'detect' in mode:
+        shutil.copytree(
+            f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/",
+            f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/",
+        )
 
     print("Initial cell classification config: ", default_config)
 
