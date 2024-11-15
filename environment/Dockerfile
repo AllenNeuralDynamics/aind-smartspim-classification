@@ -14,12 +14,10 @@ RUN conda create -n cell_seg python=3.8
 SHELL ["conda", "run", "-n", "cell_seg", "/bin/bash", "-c"]
 
 RUN apt-get update
-RUN apt-get -y install gcc g++ libcublas-12-0
+RUN apt-get -y install gcc g++ libcublas-12-0 libpcre3
 
 RUN pip install -U --no-cache-dir \
     git+https://github.com/camilolaiton/cellfinder-core.git@block_seg \
-    tensorflow==2.11.0 \
-    cuda-python==11.7.0 \
     bokeh==2.4.2 \
     dask[distributed]==2022.11.1 \
     dask_memusage \
@@ -29,9 +27,8 @@ RUN pip install -U --no-cache-dir \
     photutils==1.6.0 \
     imlib==0.1.3 \
     zarr==2.13.6 \
-    aind-data-schema==0.22.1 \
+    aind-data-schema==1.0.0 \
     aind-ng-link==1.0.6 \
     psutil==5.9.8 \
-    jupyter-server-proxy==3.2.2
-    
-RUN conda install -c conda-forge awscli 
+    jupyter-server-proxy==3.2.2 \
+    awscli

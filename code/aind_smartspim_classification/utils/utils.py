@@ -12,6 +12,7 @@ import logging
 import multiprocessing
 import os
 import platform
+import subprocess
 import time
 from datetime import datetime
 from typing import List, Optional
@@ -226,6 +227,46 @@ def find_good_blocks(img, counts, chunk, ds=3):
                 b += 1
 
     return block_dict
+
+def execute_command_helper(
+    command: str,
+    print_command: bool = False,
+    stdout_log_file: Optional[PathLike] = None,
+) -> None:
+    """
+    Execute a shell command.
+
+    Parameters
+    ------------------------
+
+    command: str
+        Command that we want to execute.
+    print_command: bool
+        Bool that dictates if we print the command in the console.
+
+    Raises
+    ------------------------
+
+    CalledProcessError:
+        if the command could not be executed (Returned non-zero status).
+
+    """
+
+    if print_command:
+        print(command)
+
+    if stdout_log_file and len(str(stdout_log_file)):
+        save_string_to_txt("$ " + command, stdout_log_file, "a")
+
+    popen = subprocess.Popen(
+        command, stdout=subprocess.PIPE, universal_newlines=True, shell=True
+    )
+    for stdout_line in iter(popen.stdout.readline, ""):
+        yield str(stdout_line).strip()
+    popen.stdout.close()
+    return_code = popen.wait()
+    if return_code:
+        raise subprocess.CalledProcessError(return_code, command)
 
 
 def create_logger(output_log_path: PathLike):
@@ -500,39 +541,6 @@ def get_size(bytes, suffix: str = "B") -> str:
             return f"{bytes:.2f}{unit}{suffix}"
         bytes /= factor
 
-def get_code_ocean_cpu_limit():
-    """
-    Gets the Code Ocean capsule CPU limit
-
-    Returns
-    -------
-    int:
-        number of cores available for compute
-    """
-    # Checks for environmental variables
-    co_cpus = os.environ.get("CO_CPUS")
-    aws_batch_job_id = os.environ.get("AWS_BATCH_JOB_ID")
-
-    if co_cpus:
-        return co_cpus
-    if aws_batch_job_id:
-        return 1
-    
-    try:
-        with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as fp:
-            cfs_quota_us = int(fp.read())
-        with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as fp:
-            cfs_period_us = int(fp.read())
-        
-        container_cpus = cfs_quota_us // cfs_period_us
-
-    except FileNotFoundError as e:
-        container_cpus = 0
-
-    # For physical machine, the `cfs_quota_us` could be '-1'
-    return psutil.cpu_count(logical=False) if container_cpus < 1 else container_cpus
-
-
 def print_system_information(logger: logging.Logger):
     """
     Prints system information
@@ -542,22 +550,9 @@ def print_system_information(logger: logging.Logger):
     logger: logging.Logger
         Logger object
     """
-    co_memory = os.environ.get("CO_MEMORY")
-    co_memory = int(co_memory) if co_memory else None
 
     # System info
     sep = "=" * 40
-    logger.info(f"{sep} Code Ocean Information {sep}")
-    logger.info(f"Code Ocean assigned cores: {get_code_ocean_cpu_limit()}")
-
-    if co_memory:
-        logger.info(f"Code Ocean assigned memory: {get_size(co_memory)}")
-
-    logger.info(f"Computation ID: {os.environ.get('CO_COMPUTATION_ID')}")
-    logger.info(f"Capsule ID: {os.environ.get('CO_CAPSULE_ID')}")
-    logger.info(f"Is pipeline execution?: {bool(os.environ.get('AWS_BATCH_JOB_ID'))}")
-
-    logger.info(f"{sep} System Information {sep}")
     uname = platform.uname()
     logger.info(f"System: {uname.system}")
     logger.info(f"Node Name: {uname.node}")
