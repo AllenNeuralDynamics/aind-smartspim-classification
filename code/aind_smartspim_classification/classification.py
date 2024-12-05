@@ -256,9 +256,82 @@ def calculate_offsets(blocks, chunk_size):
 
 #     return str(image_path), data_processes
 
+def extract_centered_3d_block(big_block, center, size, pad_value=0):
+    """
+    Extract a centered 3D block around a specified center and pad it if needed.
+
+    Parameters:
+    - big_block: numpy array of shape (Z, Y, X) representing the larger 3D block.
+    - center: tuple (z_center, y_center, x_center), the center of the block to extract.
+    - size: tuple (z_size, y_size, x_size), the size of the block to extract.
+    - pad_value: value to use for padding if the block is out of bounds.
+
+    Returns:
+    - Padded block of shape (z_size, y_size, x_size).
+    """
+    z_center, y_center, x_center = center
+    z_size, y_size, x_size = size
+
+    # Dimensions of the larger block
+    D, Z, Y, X = big_block.shape
+
+    # Compute start and end indices
+    z_start = z_center - z_size // 2
+    y_start = y_center - y_size // 2
+    x_start = x_center - x_size // 2
+
+    z_end = z_start + z_size
+    y_end = y_start + y_size
+    x_end = x_start + x_size
+
+    # Ensure the indices are within bounds
+    z_start_valid = max(z_start, 0)
+    y_start_valid = max(y_start, 0)
+    x_start_valid = max(x_start, 0)
+
+    z_end_valid = min(z_end, Z)
+    y_end_valid = min(y_end, Y)
+    x_end_valid = min(x_end, X)
+
+    # Extract the valid part of the block
+    extracted_block = big_block[
+        :,
+        z_start_valid:z_end_valid,
+        y_start_valid:y_end_valid,
+        x_start_valid:x_end_valid
+    ]
+
+    # Compute padding widths for each dimension
+    z_pad_before = max(0, -z_start)
+    y_pad_before = max(0, -y_start)
+    x_pad_before = max(0, -x_start)
+
+    z_pad_after = max(0, z_end - Z)
+    y_pad_after = max(0, y_end - Y)
+    x_pad_after = max(0, x_end - X)
+    
+    pad_width = (
+        (0, 0),
+        (z_pad_before, z_pad_after),
+        (y_pad_before, y_pad_after),
+        (x_pad_before, x_pad_after),
+    )
+    print("Pad width: ", pad_width)
+
+    # Pad the extracted block to achieve the requested size
+    padded_block = np.pad(
+        extracted_block,
+        pad_width=pad_width,
+        mode="constant",
+        constant_values=pad_value,
+    )
+
+    return padded_block
+
 def cell_classification_improved(
     smartspim_config: dict,
     logger: logging.Logger,
+    cell_proposals,
     prediction_chunksize = (128, 128, 128),
     target_size_mb=2048,
     n_workers=0,
@@ -333,11 +406,81 @@ def cell_classification_improved(
         f"Running cell classification in chunked data. Prediction chunksize: {prediction_chunksize} - Overlap chunksize: {overlap_prediction_chunksize}"
     )
     
+    cube_width = smartspim_config["cellfinder_params"]["cube_width"]
+    cube_height = smartspim_config["cellfinder_params"]["cube_height"]
+    cube_depth = smartspim_config["cellfinder_params"]["cube_depth"]
+    
     # Load model defaults to inference mode
     model = keras.models.load_model(smartspim_config["cellfinder_params"]["trained_model"])
     model.trainable = False
+    print("Input size: ", model.input_shape)
     
-    exit()
+    for i, sample in enumerate(zarr_data_loader):
+        logger.info(
+            f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
+        )
+        data_block = sample.batch_tensor[0, ...]#.permute(-1, -2, -3, -4)
+        batch_super_chunk = sample.batch_super_chunk[0]
+        batch_internal_slice = sample.batch_internal_slice
+
+        (
+            global_coord_pos,
+            global_coord_positions_start,
+            global_coord_positions_end,
+        ) = recover_global_position(
+            super_chunk_slice=batch_super_chunk,
+            internal_slices=batch_internal_slice,
+        )
+
+        unpadded_global_slice, unpadded_local_slice = unpad_global_coords(
+            global_coord_pos=global_coord_pos[-3:],
+            block_shape=data_block.shape[-3:],
+            overlap_prediction_chunksize=overlap_prediction_chunksize[-3:],
+            dataset_shape=zarr_dataset.lazy_data.shape[-3:],  # zarr_dataset.lazy_data.shape,
+        )
+        print("Global pos: ", global_coord_pos, unpadded_global_slice, data_block.shape)
+        
+        proposals_in_block = cell_proposals[
+            (cell_proposals[:, 0] >= unpadded_global_slice[0].start)  # within Z boundaries
+            & (cell_proposals[:, 0] <= unpadded_global_slice[0].stop)
+            & (cell_proposals[:, 1] >= unpadded_global_slice[1].start)  # Within Y boundaries
+            & (cell_proposals[:, 1] <= unpadded_global_slice[1].stop)
+            & (cell_proposals[:, 2] >= unpadded_global_slice[2].start)  # Within X boundaries
+            & (cell_proposals[:, 2] <= unpadded_global_slice[2].stop)
+        ]
+        # print("unpadded_global_slice: ", unpadded_global_slice)
+        # print("global_coord_pos: ", global_coord_pos)
+        # print("Proposals in block: ", proposals_in_block.shape)
+        # np.save(f"/results/data_block.npy", data_block)
+        # np.save(f"/results/proposals_in_block.npy",proposals_in_block)
+        blocks_to_classify = []
+        for proposal in proposals_in_block:
+            # print("Global coords start: ", global_coord_positions_start)
+            local_coord_proposal = proposal[:3] - np.array(global_coord_positions_start[0][1:])
+            
+            # print("Unpadded global slice: ", np.array([
+            #     unpadded_global_slice[0].start,
+            #     unpadded_global_slice[1].start,
+            #     unpadded_global_slice[2].start,
+            # ]))
+            # ZYX coord order
+            local_coord_proposal = local_coord_proposal.astype(np.int32)
+            
+            # print("Processing proposal ", proposal, " - Local points: ", local_coord_proposal, data_block.shape)
+
+            blocks_to_classify.append(
+                extract_centered_3d_block(
+                    big_block=data_block,
+                    center=local_coord_proposal,
+                    size=(cube_depth, cube_height, cube_width),
+                    pad_value=0
+                )
+            )
+            # print(f"Extracted block: {extracted_block.shape}")
+            # np.save(f"/results/{local_coord_proposal}_block.npy", extracted_block)
+        
+        
+    
 
 
 def merge_xml(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
@@ -521,6 +664,7 @@ def main(
     output_segmented_folder: PathLike,
     intermediate_segmented_folder: PathLike,
     smartspim_config: dict,
+    cell_proposals
 ):
     """
     This function detects cells
@@ -573,7 +717,7 @@ def main(
 
     # run cell detection
     image_path, data_processes = cell_classification_improved(
-        smartspim_config=smartspim_config, logger=logger
+        smartspim_config=smartspim_config, logger=logger, cell_proposals=cell_proposals
     )
 
     # merge block .xmls and .csvs into single file

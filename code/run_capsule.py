@@ -9,6 +9,7 @@ import shutil
 from glob import glob
 from pathlib import Path
 from typing import List, Tuple
+import numpy as np
 
 from aind_smartspim_classification import classification
 from aind_smartspim_classification.params import get_yaml
@@ -246,12 +247,17 @@ def run():
     smartspim_config["name"] = smartspim_dataset_name
 
     print("Final cell classification config: ", smartspim_config)
-
+    
+    cell_proposals = np.load(f"{data_folder}/spots.npy")
+    print("Spots proposals: ", cell_proposals.shape)
+    print("Cellfinder params: ", smartspim_config["cellfinder_params"])
+    
     classification.main(
         data_folder=Path(data_folder),
         output_segmented_folder=Path(results_folder),
         intermediate_segmented_folder=Path(scratch_folder),
         smartspim_config=smartspim_config,
+        cell_proposals=cell_proposals
     )
 
 
