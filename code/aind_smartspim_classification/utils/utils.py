@@ -15,7 +15,7 @@ import platform
 import subprocess
 import time
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 import dask
 import matplotlib.pyplot as plt

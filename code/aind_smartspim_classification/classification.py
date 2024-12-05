@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 import psutil
 from aind_data_schema.core.processing import DataProcess, ProcessName
+import keras
 # from cellfinder.core.classify.tools import get_model
 # from cellfinder.core.train.train_yml import models
 # from imlib.IO.cells import get_cells, save_cells
@@ -29,6 +30,8 @@ from ng_link import NgState
 from ng_link.ng_state import get_points_from_xml
 from aind_large_scale_prediction.generator.utils import (
     concatenate_lazy_data, recover_global_position, unpad_global_coords)
+from aind_large_scale_prediction.io import ImageReaderFactory
+from aind_large_scale_prediction.generator.dataset import create_data_loader
 
 from .__init__ import __version__
 from ._shared.types import PathLike
@@ -256,7 +259,10 @@ def calculate_offsets(blocks, chunk_size):
 def cell_classification_improved(
     smartspim_config: dict,
     logger: logging.Logger,
-    prediction_chunksize = (128, 128, 128)
+    prediction_chunksize = (128, 128, 128),
+    target_size_mb=2048,
+    n_workers=0,
+    super_chunksize=None,
 ):
     image_path = Path(smartspim_config["input_data"]).joinpath(
         f"{smartspim_config['input_channel']}"
@@ -271,7 +277,17 @@ def cell_classification_improved(
     )
 
     print(f" Image Path: {image_path} -- mask path: {mask_path} - scale: {smartspim_config['downsample']}")
+    
+    device = None
+
+    pin_memory = True
+    if device is not None:
+        pin_memory = False
+        multiprocessing.set_start_method("spawn", force=True)
+        
     axis_pad = 6
+    overlap_prediction_chunksize = (axis_pad, axis_pad, axis_pad)
+
     if background_path:
         logger.info(f"Using background path in {background_path}")
         lazy_data = concatenate_lazy_data(
@@ -290,11 +306,37 @@ def cell_classification_improved(
         # No segmentation mask
         lazy_data = (
             ImageReaderFactory()
-            .create(data_path=image_path, parse_path=False, multiscale=smartspim_config['downsample'])
+            .create(data_path=str(image_path), parse_path=False, multiscale=smartspim_config['downsample'])
             .as_dask_array()
         )
         
     print("Loaded lazy data: ", lazy_data)
+    zarr_data_loader, zarr_dataset = create_data_loader(
+        lazy_data=lazy_data,
+        target_size_mb=target_size_mb,
+        prediction_chunksize=prediction_chunksize,
+        overlap_prediction_chunksize=overlap_prediction_chunksize,
+        n_workers=n_workers,
+        batch_size=1,
+        dtype=np.float32,  # Allowed data type to process with pytorch cuda
+        super_chunksize=super_chunksize,
+        lazy_callback_fn=None,  # partial_lazy_deskewing,
+        logger=logger,
+        device=device,
+        pin_memory=pin_memory,
+        override_suggested_cpus=False,
+        drop_last=True,
+        locked_array=False,
+    )
+
+    logger.info(
+        f"Running cell classification in chunked data. Prediction chunksize: {prediction_chunksize} - Overlap chunksize: {overlap_prediction_chunksize}"
+    )
+    
+    # Load model defaults to inference mode
+    model = keras.models.load_model(smartspim_config["cellfinder_params"]["trained_model"])
+    model.trainable = False
+    
     exit()
 
 
