@@ -316,7 +316,7 @@ def extract_centered_3d_block(big_block, center, size, pad_value=0):
         (y_pad_before, y_pad_after),
         (x_pad_before, x_pad_after),
     )
-    print("Pad width: ", pad_width)
+    # print("Pad width: ", pad_width)
 
     # Pad the extracted block to achieve the requested size
     padded_block = np.pad(
@@ -419,6 +419,7 @@ def cell_classification_improved(
         logger.info(
             f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
         )
+        
         data_block = sample.batch_tensor[0, ...]#.permute(-1, -2, -3, -4)
         batch_super_chunk = sample.batch_super_chunk[0]
         batch_internal_slice = sample.batch_internal_slice
@@ -467,19 +468,54 @@ def cell_classification_improved(
             local_coord_proposal = local_coord_proposal.astype(np.int32)
             
             # print("Processing proposal ", proposal, " - Local points: ", local_coord_proposal, data_block.shape)
-
-            blocks_to_classify.append(
-                extract_centered_3d_block(
-                    big_block=data_block,
-                    center=local_coord_proposal,
-                    size=(cube_depth, cube_height, cube_width),
-                    pad_value=0
-                )
+            
+            extracted_block = extract_centered_3d_block(
+                big_block=data_block,
+                center=local_coord_proposal,
+                size=(cube_depth, cube_height, cube_width),
+                pad_value=0
             )
-            # print(f"Extracted block: {extracted_block.shape}")
-            # np.save(f"/results/{local_coord_proposal}_block.npy", extracted_block)
+            # Changing orientation from DZYX to XYZD for cellfinder
+            extracted_block = extracted_block.transpose(-1, -2, -3, -4)
+            blocks_to_classify.append(
+                extracted_block
+            )
         
+        blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
+        predictions_raw = model.predict(blocks_to_classify)
+        predictions = predictions_raw.round()
+        predictions = predictions.astype("uint16")
+
+        predictions = np.argmax(predictions, axis=1)
         
+        print("Model output: ", predictions, "Pred shape: ", predictions.shape, " Blocks shape: ", blocks_to_classify.shape)
+        
+        cell_likelihood = []
+        for idx, proposal in enumerate(proposals_in_block):
+            print("Proposal: ", proposal[:3].astype(np.int32))
+            cell_type = predictions[idx] + 1
+            
+            cell_x = ( (proposal[-1]) * 2**smartspim_config['downsample'] ).astype(np.uint32)
+            cell_y = ( (proposal[-2]) * 2**smartspim_config['downsample'] ).astype(np.uint32)
+            cell_z = ( (proposal[-3]) * 2**smartspim_config['downsample'] ).astype(np.uint32)
+            
+            cell_likelihood.append(
+                [cell_x, cell_y, cell_z, cell_type, predictions_raw[idx][1]]
+            )
+            
+        df = pd.DataFrame(
+            cell_likelihood, columns=["X", "Y", "Z", "Class", "Cell Likelihood"]
+        )
+        print("Dataframe: ", df)
+        # df.to_csv(os.path.join(metadata_path, f"classified_block_{str(count)}.csv"))
+        # save_cells(
+        #     offset_class, os.path.join(metadata_path, f"classified_block_{str(count)}.xml")
+        # )
+
+        out = f"Classified {predictions[predictions==1].shape[0]} Cells in block {predictions.shape[0]}."
+        # print(f"Extracted block: {extracted_block.shape}")
+        # np.save(f"/results/{local_coord_proposal}_block.npy", extracted_block)
+        exit()
     
 
 
