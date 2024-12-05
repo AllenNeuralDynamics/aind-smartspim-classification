@@ -166,8 +166,18 @@ def run():
             f"We miss the following files in the capsule input: {missing_files}"
         )
 
-    pipeline_config, smartspim_dataset_name = get_data_config(data_folder=data_folder)
-
+    pipeline_config, smartspim_dataset_name = get_data_config(
+        data_folder=data_folder,
+        processing_manifest_path="SmartSPIM_698928_2023-10-03_04-48-54/derivatives/processing_manifest.json",
+        data_description_path="SmartSPIM_698928_2023-10-03_04-48-54/data_description.json"
+    )
+    # Remove this after
+    pipeline_config = pipeline_config['pipeline_processing']
+    pipeline_config['segmentation']['input_data'] = f'{data_folder}/SmartSPIM_698928_2023-10-03_04-48-54_stitched_2024-11-12_18-16-50/image_tile_fusing/OMEZarr'
+    pipeline_config['segmentation']['channel'] = "Ex_488_Em_525"
+    pipeline_config['segmentation']['background_channel'] = "Ex_639_Em_660"
+    
+    
     # get default configs
     mode = str(sys.argv[1:])
     mode = mode.replace("[", "").replace("]", "").casefold()
