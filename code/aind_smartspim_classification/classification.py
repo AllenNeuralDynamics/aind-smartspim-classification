@@ -27,6 +27,8 @@ from aind_data_schema.core.processing import DataProcess, ProcessName
 from natsort import natsorted
 from ng_link import NgState
 from ng_link.ng_state import get_points_from_xml
+from aind_large_scale_prediction.generator.utils import (
+    concatenate_lazy_data, recover_global_position, unpad_global_coords)
 
 from .__init__ import __version__
 from ._shared.types import PathLike
@@ -251,8 +253,49 @@ def calculate_offsets(blocks, chunk_size):
 
 #     return str(image_path), data_processes
 
-def cell_classification_improved(smartspim_config: dict, logger: logging.Logger):
-    pass
+def cell_classification_improved(
+    smartspim_config: dict,
+    logger: logging.Logger,
+    prediction_chunksize = (128, 128, 128)
+):
+    image_path = Path(smartspim_config["input_data"]).joinpath(
+        f"{smartspim_config['input_channel']}"
+    )
+
+    background_path = Path(smartspim_config["input_data"]).joinpath(
+        f"{smartspim_config['background_channel']}"
+    )
+
+    mask_path = Path(smartspim_config["input_data"]).joinpath(
+        f"{smartspim_config['input_channel']}/{smartspim_config['mask_scale']}"
+    )
+
+    print(f" Image Path: {image_path} -- mask path: {mask_path} - scale: {smartspim_config['downsample']}")
+    axis_pad = 6
+    if background_path:
+        logger.info(f"Using background path in {background_path}")
+        lazy_data = concatenate_lazy_data(
+            dataset_paths=[image_path, background_path],
+            multiscales=[smartspim_config['downsample'], smartspim_config['downsample']],
+            concat_axis=-4,
+        )
+        overlap_prediction_chunksize = (0, axis_pad, axis_pad, axis_pad)
+        prediction_chunksize = (lazy_data.shape[-4],) + prediction_chunksize
+
+        logger.info(
+            f"Background path provided! New prediction chunksize: {prediction_chunksize} - New overlap: {overlap_prediction_chunksize}"
+        )
+
+    else:
+        # No segmentation mask
+        lazy_data = (
+            ImageReaderFactory()
+            .create(data_path=image_path, parse_path=False, multiscale=smartspim_config['downsample'])
+            .as_dask_array()
+        )
+        
+    print("Loaded lazy data: ", lazy_data)
+    exit()
 
 
 def merge_xml(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
@@ -469,25 +512,25 @@ def main(
 
     # Tracking compute resources
     # Subprocess to track used resources
-    manager = multiprocessing.Manager()
-    time_points = manager.list()
-    cpu_percentages = manager.list()
-    memory_usages = manager.list()
+#     manager = multiprocessing.Manager()
+#     time_points = manager.list()
+#     cpu_percentages = manager.list()
+#     memory_usages = manager.list()
 
-    profile_process = multiprocessing.Process(
-        target=utils.profile_resources,
-        args=(
-            time_points,
-            cpu_percentages,
-            memory_usages,
-            20,
-        ),
-    )
-    profile_process.daemon = True
-    profile_process.start()
+#     profile_process = multiprocessing.Process(
+#         target=utils.profile_resources,
+#         args=(
+#             time_points,
+#             cpu_percentages,
+#             memory_usages,
+#             20,
+#         ),
+#     )
+#     profile_process.daemon = True
+#     profile_process.start()
 
     # run cell detection
-    image_path, data_processes = cell_classification(
+    image_path, data_processes = cell_classification_improved(
         smartspim_config=smartspim_config, logger=logger
     )
 

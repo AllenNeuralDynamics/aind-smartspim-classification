@@ -14,7 +14,6 @@ from aind_smartspim_classification import classification
 from aind_smartspim_classification.params import get_yaml
 from aind_smartspim_classification.utils import utils
 
-
 def get_data_config(
     data_folder: str,
     processing_manifest_path: str = "segmentation_processing_manifest*",
