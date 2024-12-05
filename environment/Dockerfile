@@ -8,27 +8,14 @@ ARG GIT_ASKPASS
 ARG GIT_ACCESS_TOKEN
 COPY git-askpass /
 
-RUN conda create -n cell_seg python=3.8
-
-# Make RUN commands use the new environment:
-SHELL ["conda", "run", "-n", "cell_seg", "/bin/bash", "-c"]
-
 RUN apt-get update
 RUN apt-get -y install gcc g++ libcublas-12-0 libpcre3
 
 RUN pip install -U --no-cache-dir \
-    git+https://github.com/camilolaiton/cellfinder-core.git@block_seg \
-    bokeh==2.4.2 \
-    dask[distributed]==2022.11.1 \
-    dask_memusage \
-    argschema==3.0.4 \
-    natsort==8.2.0 \
-    astropy==5.2.1 \
-    photutils==1.6.0 \
-    imlib==0.1.3 \
-    zarr==2.13.6 \
+    aind-large-scale-prediction==1.0.0 \
     aind-data-schema==1.0.0 \
     aind-ng-link==1.0.6 \
     psutil==5.9.8 \
     jupyter-server-proxy==3.2.2 \
-    awscli
+    cellfinder>=1.0.0 \
+    argschema

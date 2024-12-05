@@ -21,9 +21,9 @@ import numpy as np
 import pandas as pd
 import psutil
 from aind_data_schema.core.processing import DataProcess, ProcessName
-from cellfinder_core.classify.tools import get_model
-from cellfinder_core.train.train_yml import models
-from imlib.IO.cells import get_cells, save_cells
+# from cellfinder.core.classify.tools import get_model
+# from cellfinder.core.train.train_yml import models
+# from imlib.IO.cells import get_cells, save_cells
 from natsort import natsorted
 from ng_link import NgState
 from ng_link.ng_state import get_points_from_xml
@@ -88,168 +88,171 @@ def calculate_offsets(blocks, chunk_size):
     return offsets
 
 
-def cell_classification(smartspim_config: dict, logger: logging.Logger):
-    image_path = Path(smartspim_config["input_data"]).joinpath(
-        f"{smartspim_config['input_channel']}/{smartspim_config['downsample']}"
-    )
+# def cell_classification(smartspim_config: dict, logger: logging.Logger):
+#     image_path = Path(smartspim_config["input_data"]).joinpath(
+#         f"{smartspim_config['input_channel']}/{smartspim_config['downsample']}"
+#     )
 
-    background_path = Path(smartspim_config["input_data"]).joinpath(
-        f"{smartspim_config['background_channel']}/{smartspim_config['downsample']}"
-    )
+#     background_path = Path(smartspim_config["input_data"]).joinpath(
+#         f"{smartspim_config['background_channel']}/{smartspim_config['downsample']}"
+#     )
 
-    mask_path = Path(smartspim_config["input_data"]).joinpath(
-        f"{smartspim_config['input_channel']}/{smartspim_config['mask_scale']}"
-    )
+#     mask_path = Path(smartspim_config["input_data"]).joinpath(
+#         f"{smartspim_config['input_channel']}/{smartspim_config['mask_scale']}"
+#     )
 
-    print(f" Image Path: {image_path}")
+#     print(f" Image Path: {image_path}")
 
-    start_date_time = datetime.now()
-    signal_array = __read_zarr_image(image_path)
-    background_array = __read_zarr_image(background_path)
-    mask_array = __read_zarr_image(mask_path)
-    end_date_time = datetime.now()
+#     start_date_time = datetime.now()
+#     signal_array = __read_zarr_image(image_path)
+#     background_array = __read_zarr_image(background_path)
+#     mask_array = __read_zarr_image(mask_path)
+#     end_date_time = datetime.now()
 
-    signal_array = signal_array[0, 0, :, :, :]
-    background_array = background_array[0, 0, :, :, :]
-    mask_array = mask_array[0, 0, :, :, :]
+#     signal_array = signal_array[0, 0, :, :, :]
+#     background_array = background_array[0, 0, :, :, :]
+#     mask_array = mask_array[0, 0, :, :, :]
 
-    data_processes = []
-    logger.info(f"Image to process: {image_path}")
+#     data_processes = []
+#     logger.info(f"Image to process: {image_path}")
 
-    logger.info(f"Starting classification with array {signal_array}")
+#     logger.info(f"Starting classification with array {signal_array}")
 
-    data_processes.append(
-        DataProcess(
-            name=ProcessName.IMAGE_IMPORTING,
-            software_version=__version__,
-            start_date_time=start_date_time,
-            end_date_time=end_date_time,
-            input_location=str(image_path),
-            output_location=str(image_path),
-            outputs={},
-            code_url="https://github.com/AllenNeuralDynamics/aind-SmartSPIM-segmentation",
-            code_version=__version__,
-            parameters={},
-            notes="Importing fused data for cell classification",
-        )
-    )
+#     data_processes.append(
+#         DataProcess(
+#             name=ProcessName.IMAGE_IMPORTING,
+#             software_version=__version__,
+#             start_date_time=start_date_time,
+#             end_date_time=end_date_time,
+#             input_location=str(image_path),
+#             output_location=str(image_path),
+#             outputs={},
+#             code_url="https://github.com/AllenNeuralDynamics/aind-SmartSPIM-segmentation",
+#             code_version=__version__,
+#             parameters={},
+#             notes="Importing fused data for cell classification",
+#         )
+#     )
 
-    start_date_time = datetime.now()
+#     start_date_time = datetime.now()
 
-    # get proper chunking for classification
-    if smartspim_config["chunk_size"] % 64 == 0:
-        chunk_step = int(512 / 2 ** smartspim_config["downsample"])
-    elif (
-        smartspim_config["chunk_size"] == 1 or smartspim_config["chunk_size"] % 250 == 0
-    ):
-        chunk_step = int(500 / 2 ** smartspim_config["downsample"])
+#     # get proper chunking for classification
+#     if smartspim_config["chunk_size"] % 64 == 0:
+#         chunk_step = int(512 / 2 ** smartspim_config["downsample"])
+#     elif (
+#         smartspim_config["chunk_size"] == 1 or smartspim_config["chunk_size"] % 250 == 0
+#     ):
+#         chunk_step = int(500 / 2 ** smartspim_config["downsample"])
 
-    logger.info(
-        f"z-plane chunk size: {smartspim_config['chunk_size']}. Processing with chunk size: {chunk_step}."
-    )
+#     logger.info(
+#         f"z-plane chunk size: {smartspim_config['chunk_size']}. Processing with chunk size: {chunk_step}."
+#     )
 
-    # get quality blocks using mask
-    chunks = [int(np.ceil(x / chunk_step)) for x in signal_array.shape]
-    good_blocks = utils.find_good_blocks(
-        mask_array,
-        chunks,
-        chunk_step,
-        smartspim_config["mask_scale"] - smartspim_config["downsample"],
-    )
+#     # get quality blocks using mask
+#     chunks = [int(np.ceil(x / chunk_step)) for x in signal_array.shape]
+#     good_blocks = utils.find_good_blocks(
+#         mask_array,
+#         chunks,
+#         chunk_step,
+#         smartspim_config["mask_scale"] - smartspim_config["downsample"],
+#     )
 
-    rechunk_size = [axis * (chunk_step // axis) for axis in signal_array.chunksize]
-    signal_array = signal_array.rechunk(tuple(rechunk_size))
-    background_array = background_array.rechunk(tuple(rechunk_size))
-    logger.info(f"Rechunk dask array to {signal_array.chunksize}.")
+#     rechunk_size = [axis * (chunk_step // axis) for axis in signal_array.chunksize]
+#     signal_array = signal_array.rechunk(tuple(rechunk_size))
+#     background_array = background_array.rechunk(tuple(rechunk_size))
+#     logger.info(f"Rechunk dask array to {signal_array.chunksize}.")
 
-    all_blocks = signal_array.to_delayed().ravel()
-    all_bkg_blocks = background_array.to_delayed().ravel()
-    all_offsets = calculate_offsets(signal_array.numblocks, signal_array.chunksize)
+#     all_blocks = signal_array.to_delayed().ravel()
+#     all_bkg_blocks = background_array.to_delayed().ravel()
+#     all_offsets = calculate_offsets(signal_array.numblocks, signal_array.chunksize)
 
-    (
-        blocks,
-        bkg_blocks,
-        offsets,
-        counts,
-    ) = (
-        [],
-        [],
-        [],
-        [],
-    )
+#     (
+#         blocks,
+#         bkg_blocks,
+#         offsets,
+#         counts,
+#     ) = (
+#         [],
+#         [],
+#         [],
+#         [],
+#     )
 
-    for c, gb in good_blocks.items():
-        if gb:
-            blocks.append(all_blocks[c])
-            bkg_blocks.append(all_bkg_blocks[c])
-            offsets.append(all_offsets[c])
-            counts.append(c)
+#     for c, gb in good_blocks.items():
+#         if gb:
+#             blocks.append(all_blocks[c])
+#             bkg_blocks.append(all_bkg_blocks[c])
+#             offsets.append(all_offsets[c])
+#             counts.append(c)
 
-    padding = (
-        int(np.ceil((smartspim_config["cellfinder_params"]["cube_depth"] + 1) / 2)),
-        int(np.ceil((smartspim_config["cellfinder_params"]["cube_depth"] + 1) / 2)),
-    )
+#     padding = (
+#         int(np.ceil((smartspim_config["cellfinder_params"]["cube_depth"] + 1) / 2)),
+#         int(np.ceil((smartspim_config["cellfinder_params"]["cube_depth"] + 1) / 2)),
+#     )
 
-    process = psutil.Process(os.getpid())
+#     process = psutil.Process(os.getpid())
 
-    for sig, bkg, offset, count in zip(blocks, bkg_blocks, offsets, counts):
-        model = get_model(
-            existing_model=smartspim_config["cellfinder_params"]["trained_model"],
-            model_weights=None,
-            network_depth=models[
-                smartspim_config["cellfinder_params"]["network_depth"]
-            ],
-            inference=True,
-        )
+#     for sig, bkg, offset, count in zip(blocks, bkg_blocks, offsets, counts):
+#         model = get_model(
+#             existing_model=smartspim_config["cellfinder_params"]["trained_model"],
+#             model_weights=None,
+#             network_depth=models[
+#                 smartspim_config["cellfinder_params"]["network_depth"]
+#             ],
+#             inference=True,
+#         )
 
-        signal = np.pad(sig.compute(), padding, mode="reflect")
+#         signal = np.pad(sig.compute(), padding, mode="reflect")
 
-        background = np.pad(bkg.compute(), padding, mode="reflect")
+#         background = np.pad(bkg.compute(), padding, mode="reflect")
 
-        out = utils.run_classify(
-            signal,
-            background,
-            smartspim_config["metadata_path"],
-            count,
-            offset,
-            smartspim_config["cellfinder_params"],
-            smartspim_config["downsample"],
-            padding[0],
-            model,
-        )
+#         out = utils.run_classify(
+#             signal,
+#             background,
+#             smartspim_config["metadata_path"],
+#             count,
+#             offset,
+#             smartspim_config["cellfinder_params"],
+#             smartspim_config["downsample"],
+#             padding[0],
+#             model,
+#         )
 
-        del model
-        K.clear_session()
-        gc.collect()
+#         del model
+#         K.clear_session()
+#         gc.collect()
 
-        memory_usage = process.memory_info().rss / 1024**3
-        print(f"Currently using {memory_usage} GB of RAM")
+#         memory_usage = process.memory_info().rss / 1024**3
+#         print(f"Currently using {memory_usage} GB of RAM")
 
-    end_date_time = datetime.now()
+#     end_date_time = datetime.now()
 
-    data_processes.append(
-        DataProcess(
-            name=ProcessName.IMAGE_CELL_SEGMENTATION,
-            software_version=__version__,
-            start_date_time=start_date_time,
-            end_date_time=end_date_time,
-            input_location=str(image_path),
-            output_location=str(smartspim_config["metadata_path"]),
-            outputs={},
-            code_url="https://github.com/AllenNeuralDynamics/aind-SmartSPIM-classification",
-            code_version=__version__,
-            parameters={
-                "chunk_step": chunk_step,
-                "image_path": str(image_path),
-                "background_path": str(background_path),
-                "mask_path": str(mask_path),
-                "smartspim_cell_config": smartspim_config,
-            },
-            notes=f"Classifying channel in path: {image_path}",
-        )
-    )
+#     data_processes.append(
+#         DataProcess(
+#             name=ProcessName.IMAGE_CELL_SEGMENTATION,
+#             software_version=__version__,
+#             start_date_time=start_date_time,
+#             end_date_time=end_date_time,
+#             input_location=str(image_path),
+#             output_location=str(smartspim_config["metadata_path"]),
+#             outputs={},
+#             code_url="https://github.com/AllenNeuralDynamics/aind-SmartSPIM-classification",
+#             code_version=__version__,
+#             parameters={
+#                 "chunk_step": chunk_step,
+#                 "image_path": str(image_path),
+#                 "background_path": str(background_path),
+#                 "mask_path": str(mask_path),
+#                 "smartspim_cell_config": smartspim_config,
+#             },
+#             notes=f"Classifying channel in path: {image_path}",
+#         )
+#     )
 
-    return str(image_path), data_processes
+#     return str(image_path), data_processes
+
+def cell_classification_improved(smartspim_config: dict, logger: logging.Logger):
+    pass
 
 
 def merge_xml(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):

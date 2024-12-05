@@ -182,7 +182,8 @@ def run():
         )
         default_config["cellfinder_params"][
             "trained_model"
-        ] = f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
+        ] = f"{data_folder}/resnet_smartspim_18_test.keras"
+        #f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
 
     elif "cytosolic":
         default_config = get_yaml(
@@ -209,8 +210,8 @@ def run():
 
     # want to shutil segmentation data to results folder if detection was run
     default_config[
-            "metadata_path"
-        ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
+        "metadata_path"
+    ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
 
 
     if 'classify' in mode:
