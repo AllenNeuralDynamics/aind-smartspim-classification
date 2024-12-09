@@ -10,6 +10,7 @@ from glob import glob
 from pathlib import Path
 from typing import List, Tuple
 import numpy as np
+import torch
 
 from aind_smartspim_classification import classification
 from aind_smartspim_classification.params import get_yaml
@@ -262,4 +263,5 @@ def run():
 
 
 if __name__ == "__main__":
+    torch.multiprocessing.set_start_method('spawn', force=True)
     run()
