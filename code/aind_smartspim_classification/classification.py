@@ -92,170 +92,6 @@ def calculate_offsets(blocks, chunk_size):
                 )
     return offsets
 
-
-# def cell_classification(smartspim_config: dict, logger: logging.Logger):
-#     image_path = Path(smartspim_config["input_data"]).joinpath(
-#         f"{smartspim_config['input_channel']}/{smartspim_config['downsample']}"
-#     )
-
-#     background_path = Path(smartspim_config["input_data"]).joinpath(
-#         f"{smartspim_config['background_channel']}/{smartspim_config['downsample']}"
-#     )
-
-#     mask_path = Path(smartspim_config["input_data"]).joinpath(
-#         f"{smartspim_config['input_channel']}/{smartspim_config['mask_scale']}"
-#     )
-
-#     print(f" Image Path: {image_path}")
-
-#     start_date_time = datetime.now()
-#     signal_array = __read_zarr_image(image_path)
-#     background_array = __read_zarr_image(background_path)
-#     mask_array = __read_zarr_image(mask_path)
-#     end_date_time = datetime.now()
-
-#     signal_array = signal_array[0, 0, :, :, :]
-#     background_array = background_array[0, 0, :, :, :]
-#     mask_array = mask_array[0, 0, :, :, :]
-
-#     data_processes = []
-#     logger.info(f"Image to process: {image_path}")
-
-#     logger.info(f"Starting classification with array {signal_array}")
-
-#     data_processes.append(
-#         DataProcess(
-#             name=ProcessName.IMAGE_IMPORTING,
-#             software_version=__version__,
-#             start_date_time=start_date_time,
-#             end_date_time=end_date_time,
-#             input_location=str(image_path),
-#             output_location=str(image_path),
-#             outputs={},
-#             code_url="https://github.com/AllenNeuralDynamics/aind-SmartSPIM-segmentation",
-#             code_version=__version__,
-#             parameters={},
-#             notes="Importing fused data for cell classification",
-#         )
-#     )
-
-#     start_date_time = datetime.now()
-
-#     # get proper chunking for classification
-#     if smartspim_config["chunk_size"] % 64 == 0:
-#         chunk_step = int(512 / 2 ** smartspim_config["downsample"])
-#     elif (
-#         smartspim_config["chunk_size"] == 1 or smartspim_config["chunk_size"] % 250 == 0
-#     ):
-#         chunk_step = int(500 / 2 ** smartspim_config["downsample"])
-
-#     logger.info(
-#         f"z-plane chunk size: {smartspim_config['chunk_size']}. Processing with chunk size: {chunk_step}."
-#     )
-
-#     # get quality blocks using mask
-#     chunks = [int(np.ceil(x / chunk_step)) for x in signal_array.shape]
-#     good_blocks = utils.find_good_blocks(
-#         mask_array,
-#         chunks,
-#         chunk_step,
-#         smartspim_config["mask_scale"] - smartspim_config["downsample"],
-#     )
-
-#     rechunk_size = [axis * (chunk_step // axis) for axis in signal_array.chunksize]
-#     signal_array = signal_array.rechunk(tuple(rechunk_size))
-#     background_array = background_array.rechunk(tuple(rechunk_size))
-#     logger.info(f"Rechunk dask array to {signal_array.chunksize}.")
-
-#     all_blocks = signal_array.to_delayed().ravel()
-#     all_bkg_blocks = background_array.to_delayed().ravel()
-#     all_offsets = calculate_offsets(signal_array.numblocks, signal_array.chunksize)
-
-#     (
-#         blocks,
-#         bkg_blocks,
-#         offsets,
-#         counts,
-#     ) = (
-#         [],
-#         [],
-#         [],
-#         [],
-#     )
-
-#     for c, gb in good_blocks.items():
-#         if gb:
-#             blocks.append(all_blocks[c])
-#             bkg_blocks.append(all_bkg_blocks[c])
-#             offsets.append(all_offsets[c])
-#             counts.append(c)
-
-#     padding = (
-#         int(np.ceil((smartspim_config["cellfinder_params"]["cube_depth"] + 1) / 2)),
-#         int(np.ceil((smartspim_config["cellfinder_params"]["cube_depth"] + 1) / 2)),
-#     )
-
-#     process = psutil.Process(os.getpid())
-
-#     for sig, bkg, offset, count in zip(blocks, bkg_blocks, offsets, counts):
-#         model = get_model(
-#             existing_model=smartspim_config["cellfinder_params"]["trained_model"],
-#             model_weights=None,
-#             network_depth=models[
-#                 smartspim_config["cellfinder_params"]["network_depth"]
-#             ],
-#             inference=True,
-#         )
-
-#         signal = np.pad(sig.compute(), padding, mode="reflect")
-
-#         background = np.pad(bkg.compute(), padding, mode="reflect")
-
-#         out = utils.run_classify(
-#             signal,
-#             background,
-#             smartspim_config["metadata_path"],
-#             count,
-#             offset,
-#             smartspim_config["cellfinder_params"],
-#             smartspim_config["downsample"],
-#             padding[0],
-#             model,
-#         )
-
-#         del model
-#         K.clear_session()
-#         gc.collect()
-
-#         memory_usage = process.memory_info().rss / 1024**3
-#         print(f"Currently using {memory_usage} GB of RAM")
-
-#     end_date_time = datetime.now()
-
-#     data_processes.append(
-#         DataProcess(
-#             name=ProcessName.IMAGE_CELL_SEGMENTATION,
-#             software_version=__version__,
-#             start_date_time=start_date_time,
-#             end_date_time=end_date_time,
-#             input_location=str(image_path),
-#             output_location=str(smartspim_config["metadata_path"]),
-#             outputs={},
-#             code_url="https://github.com/AllenNeuralDynamics/aind-SmartSPIM-classification",
-#             code_version=__version__,
-#             parameters={
-#                 "chunk_step": chunk_step,
-#                 "image_path": str(image_path),
-#                 "background_path": str(background_path),
-#                 "mask_path": str(mask_path),
-#                 "smartspim_cell_config": smartspim_config,
-#             },
-#             notes=f"Classifying channel in path: {image_path}",
-#         )
-#     )
-
-#     return str(image_path), data_processes
-
 def extract_centered_3d_block(big_block, center, size, pad_value=0):
     """
     Extract a centered 3D block around a specified center and pad it if needed.
@@ -419,12 +255,10 @@ def cell_classification_improved(
     model = keras.models.load_model(smartspim_config["cellfinder_params"]["trained_model"])
     model.trainable = False
     ORIG_AXIS_ORDER = ["Z", "Y", "X"]
-    # print("Input size: ", model.input_shape)
     
     total_batches = sum(zarr_dataset.internal_slice_sum) / batch_size
-    print("Total batches: ", total_batches, " - cell proposals: ", cell_proposals.shape[0])
-    
-    stopi = 0
+    logger.info(f"Total batches: {total_batches} - cell proposals: {cell_proposals.shape[0]}")
+
     for i, sample in enumerate(zarr_data_loader):
         logger.info(
             f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
@@ -464,25 +298,12 @@ def cell_classification_improved(
         
         if proposals_in_block.shape[0]:
 
-            # print("unpadded_global_slice: ", unpadded_global_slice)
-            # print("global_coord_pos: ", global_coord_pos)
-            # print("Proposals in block: ", proposals_in_block.shape)
-            # np.save(f"/results/data_block.npy", data_block)
-            # np.save(f"/results/proposals_in_block.npy",proposals_in_block)
             blocks_to_classify = []
             for proposal in proposals_in_block:
-                # print("Global coords start: ", global_coord_positions_start)
                 local_coord_proposal = proposal[:3] - np.array(global_coord_positions_start[0][1:])
 
-                # print("Unpadded global slice: ", np.array([
-                #     unpadded_global_slice[0].start,
-                #     unpadded_global_slice[1].start,
-                #     unpadded_global_slice[2].start,
-                # ]))
                 # ZYX coord order
                 local_coord_proposal = local_coord_proposal.astype(np.int32)
-
-                # print("Processing proposal ", proposal, " - Local points: ", local_coord_proposal, data_block.shape)
 
                 extracted_block = extract_centered_3d_block(
                     big_block=data_block,
@@ -503,11 +324,8 @@ def cell_classification_improved(
 
             predictions = np.argmax(predictions, axis=1)
 
-            # print("Model output: ", predictions, "Pred shape: ", predictions.shape, " Blocks shape: ", blocks_to_classify.shape)
-
             cell_likelihood = []
             for idx, proposal in enumerate(proposals_in_block):
-                # print("Proposal: ", proposal[:3].astype(np.int32))
                 cell_type = predictions[idx] + 1
 
                 cell_x = ( (proposal[-1]) * 2**smartspim_config['downsample'] ).astype(np.uint32)
@@ -521,30 +339,14 @@ def cell_classification_improved(
             cell_likelihood = np.array(cell_likelihood)
 
             all_cells_df = pd.DataFrame(
-                cell_likelihood, columns=["X", "Y", "Z", "Class", "Cell Likelihood"]
+                cell_likelihood, columns=["x", "y", "z", "Class", "Cell Likelihood"]
             )
-            # positive_cells = cell_likelihood[predictions==1]
-            # positive_cells_df = pd.DataFrame(
-            #     positive_cells, columns=["X", "Y", "Z", "Class", "Cell Likelihood"]
-            # )
-            # print("Dataframe: ", all_cells_df)
+
             all_cells_df.to_csv(os.path.join(smartspim_config["metadata_path"], f"classified_block_{global_pos_name}_count_{str(predictions.shape[0])}.csv"))
 
-            # save_cells(
-            #     cell_likelihood[predictions==1], os.path.join(smartspim_config["metadata_path"], f"classified_block_{global_coord_pos}_{str(count)}.csv")
-            # )
-
-            # print(f"Extracted block: {extracted_block.shape}")
-            # np.save(f"/results/{local_coord_proposal}_block.npy", extracted_block)
         else:
             logger.info(f"No proposals found in {global_pos_name}!")
-            
-        if stopi == 10:
-            break
-        
-        else:
-            stopi +=1
-            
+
     end_date_time = datetime.now()
 
     data_processes.append(
@@ -572,28 +374,6 @@ def cell_classification_improved(
     )
 
     return str(image_path), data_processes
-
-def merge_xml(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
-    """
-    Saves list of all classified cells to XML
-    """
-
-    # load temporary files and save to a single list
-    logger.info(f"Reading XMLS from cells path: {metadata_path}")
-    cells = []
-    tmp_files = glob(metadata_path + "/classified_block_*.xml")
-
-    for f in natsorted(tmp_files):
-        try:
-            cells.extend(get_cells(f))
-        except:
-            pass
-
-    # save list of all cells
-    save_cells(
-        cells=cells,
-        xml_file_path=os.path.join(save_path, "classified_cells.xml"),
-    )
 
 
 def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
@@ -693,8 +473,7 @@ def generate_neuroglancer_link(
     logger.info(f"Reading cells from {classified_cells_path}")
     df_cells = pd.read_csv(classified_cells_path)
     df_cells = df_cells.loc[df_cells['Class'] == 2, :]
-    df_cells = df_cells[['X', 'Y', 'Z']]
-    df_cells = df_cells.rename(columns={'X': 'x', 'Y': 'y', 'Z': 'z'})
+    df_cells = df_cells[['x', 'y', 'z']]
     
     cells = df_cells.to_dict(orient="records")
 
