@@ -14,6 +14,7 @@ import os
 from datetime import datetime
 from glob import glob
 from pathlib import Path
+import torch
 
 import dask.array as da
 import keras.backend as K
@@ -21,12 +22,17 @@ import numpy as np
 import pandas as pd
 import psutil
 from aind_data_schema.core.processing import DataProcess, ProcessName
-from cellfinder_core.classify.tools import get_model
-from cellfinder_core.train.train_yml import models
-from imlib.IO.cells import get_cells, save_cells
+import keras
+# from cellfinder.core.classify.tools import get_model
+# from cellfinder.core.train.train_yml import models
+# from imlib.IO.cells import get_cells, save_cells
 from natsort import natsorted
 from ng_link import NgState
 from ng_link.ng_state import get_points_from_xml
+from aind_large_scale_prediction.generator.utils import (
+    concatenate_lazy_data, recover_global_position, unpad_global_coords)
+from aind_large_scale_prediction.io import ImageReaderFactory
+from aind_large_scale_prediction.generator.dataset import create_data_loader
 
 from .__init__ import __version__
 from ._shared.types import PathLike
@@ -87,143 +93,306 @@ def calculate_offsets(blocks, chunk_size):
                 )
     return offsets
 
+def extract_centered_3d_block(big_block, center, size, pad_value=0):
+    """
+    Extract a centered 3D block around a specified center and pad it if needed.
 
-def cell_classification(smartspim_config: dict, logger: logging.Logger):
+    Parameters:
+    - big_block: numpy array of shape (Z, Y, X) representing the larger 3D block.
+    - center: tuple (z_center, y_center, x_center), the center of the block to extract.
+    - size: tuple (z_size, y_size, x_size), the size of the block to extract.
+    - pad_value: value to use for padding if the block is out of bounds.
+
+    Returns:
+    - Padded block of shape (z_size, y_size, x_size).
+    """
+    z_center, y_center, x_center = center
+    z_size, y_size, x_size = size
+
+    # Dimensions of the larger block
+    D, Z, Y, X = big_block.shape
+
+    # Compute start and end indices
+    z_start = z_center - z_size // 2
+    y_start = y_center - y_size // 2
+    x_start = x_center - x_size // 2
+
+    z_end = z_start + z_size
+    y_end = y_start + y_size
+    x_end = x_start + x_size
+
+    # Ensure the indices are within bounds
+    z_start_valid = max(z_start, 0)
+    y_start_valid = max(y_start, 0)
+    x_start_valid = max(x_start, 0)
+
+    z_end_valid = min(z_end, Z)
+    y_end_valid = min(y_end, Y)
+    x_end_valid = min(x_end, X)
+
+    # Extract the valid part of the block
+    extracted_block = big_block[
+        :,
+        z_start_valid:z_end_valid,
+        y_start_valid:y_end_valid,
+        x_start_valid:x_end_valid
+    ]
+
+    # Compute padding widths for each dimension
+    z_pad_before = max(0, -z_start)
+    y_pad_before = max(0, -y_start)
+    x_pad_before = max(0, -x_start)
+
+    z_pad_after = max(0, z_end - Z)
+    y_pad_after = max(0, y_end - Y)
+    x_pad_after = max(0, x_end - X)
+    
+    pad_width = (
+        (0, 0),
+        (z_pad_before, z_pad_after),
+        (y_pad_before, y_pad_after),
+        (x_pad_before, x_pad_after),
+    )
+    # print("Pad width: ", pad_width)
+
+    # Pad the extracted block to achieve the requested size
+    padded_block = np.pad(
+        extracted_block,
+        pad_width=pad_width,
+        mode="constant",
+        constant_values=pad_value,
+    )
+
+    return padded_block
+
+def upsample_position(position, downsample_factor):
+    """
+    Upsample a ZYX position from a downsampled image to the original resolution.
+    
+    Parameters:
+    - position: Tuple or list containing (z, y, x) coordinates in the downsampled image
+    - downsample_factor: Number of times the image was downsampled by 2 in each axis
+    
+    Returns:
+    - Upsampled (z, y, x) coordinates in the original image resolution
+    """
+    z, y, x = position
+    
+    # Upsample each coordinate by multiplying by 2^downsample_factor
+    upsampled_z = z * (2 ** downsample_factor)
+    upsampled_y = y * (2 ** downsample_factor)
+    upsampled_x = x * (2 ** downsample_factor)
+    
+    upsampled_z = upsampled_z.astype(np.uint32)
+    upsampled_y = upsampled_y.astype(np.uint32)
+    upsampled_x = upsampled_x.astype(np.uint32)
+    return upsampled_z, upsampled_y, upsampled_x
+
+def cell_classification_improved(
+    smartspim_config: dict,
+    logger: logging.Logger,
+    cell_proposals,
+    prediction_chunksize = (128, 128, 128),
+    target_size_mb=2048,
+    n_workers=0,
+    super_chunksize=None,
+):
+    start_date_time = datetime.now()
+    
+    data_processes = []
+    
     image_path = Path(smartspim_config["input_data"]).joinpath(
-        f"{smartspim_config['input_channel']}/{smartspim_config['downsample']}"
+        f"{smartspim_config['input_channel']}"
     )
 
     background_path = Path(smartspim_config["input_data"]).joinpath(
-        f"{smartspim_config['background_channel']}/{smartspim_config['downsample']}"
+        f"{smartspim_config['background_channel']}"
     )
 
     mask_path = Path(smartspim_config["input_data"]).joinpath(
         f"{smartspim_config['input_channel']}/{smartspim_config['mask_scale']}"
     )
 
-    print(f" Image Path: {image_path}")
+    print(f" Image Path: {image_path} -- mask path: {mask_path} - scale: {smartspim_config['downsample']}")
+    
+    device = None
 
-    start_date_time = datetime.now()
-    signal_array = __read_zarr_image(image_path)
-    background_array = __read_zarr_image(background_path)
-    mask_array = __read_zarr_image(mask_path)
-    end_date_time = datetime.now()
+    pin_memory = True
+    if device is not None:
+        pin_memory = False
+        multiprocessing.set_start_method("spawn", force=True)
+        
+    axis_pad = 6
+    overlap_prediction_chunksize = (axis_pad, axis_pad, axis_pad)
 
-    signal_array = signal_array[0, 0, :, :, :]
-    background_array = background_array[0, 0, :, :, :]
-    mask_array = mask_array[0, 0, :, :, :]
-
-    data_processes = []
-    logger.info(f"Image to process: {image_path}")
-
-    logger.info(f"Starting classification with array {signal_array}")
-
-    data_processes.append(
-        DataProcess(
-            name=ProcessName.IMAGE_IMPORTING,
-            software_version=__version__,
-            start_date_time=start_date_time,
-            end_date_time=end_date_time,
-            input_location=str(image_path),
-            output_location=str(image_path),
-            outputs={},
-            code_url="https://github.com/AllenNeuralDynamics/aind-SmartSPIM-segmentation",
-            code_version=__version__,
-            parameters={},
-            notes="Importing fused data for cell classification",
+    if background_path:
+        logger.info(f"Using background path in {background_path}")
+        lazy_data = concatenate_lazy_data(
+            dataset_paths=[image_path, background_path],
+            multiscales=[smartspim_config['downsample'], smartspim_config['downsample']],
+            concat_axis=-4,
         )
+        overlap_prediction_chunksize = (0, axis_pad, axis_pad, axis_pad)
+        prediction_chunksize = (lazy_data.shape[-4],) + prediction_chunksize
+
+        logger.info(
+            f"Background path provided! New prediction chunksize: {prediction_chunksize} - New overlap: {overlap_prediction_chunksize}"
+        )
+
+    else:
+        # No segmentation mask
+        lazy_data = (
+            ImageReaderFactory()
+            .create(data_path=str(image_path), parse_path=False, multiscale=smartspim_config['downsample'])
+            .as_dask_array()
+        )
+        
+    print("Loaded lazy data: ", lazy_data)
+    batch_size = 1
+    dtype = np.float32
+    zarr_data_loader, zarr_dataset = create_data_loader(
+        lazy_data=lazy_data,
+        target_size_mb=target_size_mb,
+        prediction_chunksize=prediction_chunksize,
+        overlap_prediction_chunksize=overlap_prediction_chunksize,
+        n_workers=n_workers,
+        batch_size=batch_size,
+        dtype=dtype,  # Allowed data type to process with pytorch cuda
+        super_chunksize=super_chunksize,
+        lazy_callback_fn=None,  # partial_lazy_deskewing,
+        logger=logger,
+        device=device,
+        pin_memory=pin_memory,
+        override_suggested_cpus=False,
+        drop_last=True,
+        locked_array=False,
     )
-
-    start_date_time = datetime.now()
-
-    # get proper chunking for classification
-    if smartspim_config["chunk_size"] % 64 == 0:
-        chunk_step = int(512 / 2 ** smartspim_config["downsample"])
-    elif (
-        smartspim_config["chunk_size"] == 1 or smartspim_config["chunk_size"] % 250 == 0
-    ):
-        chunk_step = int(500 / 2 ** smartspim_config["downsample"])
 
     logger.info(
-        f"z-plane chunk size: {smartspim_config['chunk_size']}. Processing with chunk size: {chunk_step}."
+        f"Running cell classification in chunked data. Prediction chunksize: {prediction_chunksize} - Overlap chunksize: {overlap_prediction_chunksize}"
     )
+    
+    cube_width = smartspim_config["cellfinder_params"]["cube_width"]
+    cube_height = smartspim_config["cellfinder_params"]["cube_height"]
+    cube_depth = smartspim_config["cellfinder_params"]["cube_depth"]
+    
+    # Load model defaults to inference mode
+    model = keras.models.load_model(smartspim_config["cellfinder_params"]["trained_model"])
+    model.trainable = False
+    ORIG_AXIS_ORDER = ["Z", "Y", "X"]
+    
+    total_batches = sum(zarr_dataset.internal_slice_sum) / batch_size
+    logger.info(f"Total batches: {total_batches} - cell proposals: {cell_proposals.shape[0]}")
+    
+    total_memory = torch.cuda.get_device_properties(device).total_memory
+    target_memory = int(0.75 * total_memory)
+    
+    logger.info(f"GPU total memory: {total_memory} - Target memory: {target_memory}")
+    
+    block_size_bytes = np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
+    # Estimate the number of blocks that fit within 80% memory
+    max_blocks = target_memory // block_size_bytes
+    logger.info(f"Maximum blocks: {max_blocks}")
 
-    # get quality blocks using mask
-    chunks = [int(np.ceil(x / chunk_step)) for x in signal_array.shape]
-    good_blocks = utils.find_good_blocks(
-        mask_array,
-        chunks,
-        chunk_step,
-        smartspim_config["mask_scale"] - smartspim_config["downsample"],
-    )
+    curr_blocks = 0
+    blocks_to_classify = []
+    picked_proposals = []
+    
+    for i, sample in enumerate(zarr_data_loader):
+        logger.info(
+            f"Batch [{i} | {total_batches}]: blocks: {curr_blocks} - Max blocks: {max_blocks} {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
+        )
+        
+        data_block = sample.batch_tensor[0, ...]#.permute(-1, -2, -3, -4)
+        batch_super_chunk = sample.batch_super_chunk[0]
+        batch_internal_slice = sample.batch_internal_slice
 
-    rechunk_size = [axis * (chunk_step // axis) for axis in signal_array.chunksize]
-    signal_array = signal_array.rechunk(tuple(rechunk_size))
-    background_array = background_array.rechunk(tuple(rechunk_size))
-    logger.info(f"Rechunk dask array to {signal_array.chunksize}.")
-
-    all_blocks = signal_array.to_delayed().ravel()
-    all_bkg_blocks = background_array.to_delayed().ravel()
-    all_offsets = calculate_offsets(signal_array.numblocks, signal_array.chunksize)
-
-    (
-        blocks,
-        bkg_blocks,
-        offsets,
-        counts,
-    ) = (
-        [],
-        [],
-        [],
-        [],
-    )
-
-    for c, gb in good_blocks.items():
-        if gb:
-            blocks.append(all_blocks[c])
-            bkg_blocks.append(all_bkg_blocks[c])
-            offsets.append(all_offsets[c])
-            counts.append(c)
-
-    padding = (
-        int(np.ceil((smartspim_config["cellfinder_params"]["cube_depth"] + 1) / 2)),
-        int(np.ceil((smartspim_config["cellfinder_params"]["cube_depth"] + 1) / 2)),
-    )
-
-    process = psutil.Process(os.getpid())
-
-    for sig, bkg, offset, count in zip(blocks, bkg_blocks, offsets, counts):
-        model = get_model(
-            existing_model=smartspim_config["cellfinder_params"]["trained_model"],
-            model_weights=None,
-            network_depth=models[
-                smartspim_config["cellfinder_params"]["network_depth"]
-            ],
-            inference=True,
+        (
+            global_coord_pos,
+            global_coord_positions_start,
+            global_coord_positions_end,
+        ) = recover_global_position(
+            super_chunk_slice=batch_super_chunk,
+            internal_slices=batch_internal_slice,
         )
 
-        signal = np.pad(sig.compute(), padding, mode="reflect")
-
-        background = np.pad(bkg.compute(), padding, mode="reflect")
-
-        out = utils.run_classify(
-            signal,
-            background,
-            smartspim_config["metadata_path"],
-            count,
-            offset,
-            smartspim_config["cellfinder_params"],
-            smartspim_config["downsample"],
-            padding[0],
-            model,
+        unpadded_global_slice, unpadded_local_slice = unpad_global_coords(
+            global_coord_pos=global_coord_pos[-3:],
+            block_shape=data_block.shape[-3:],
+            overlap_prediction_chunksize=overlap_prediction_chunksize[-3:],
+            dataset_shape=zarr_dataset.lazy_data.shape[-3:],  # zarr_dataset.lazy_data.shape,
         )
+        # print("Global pos: ", global_coord_pos, unpadded_global_slice, data_block.shape)
+        
+        proposals_in_block = cell_proposals[
+            (cell_proposals[:, 0] >= unpadded_global_slice[0].start)  # within Z boundaries
+            & (cell_proposals[:, 0] <= unpadded_global_slice[0].stop)
+            & (cell_proposals[:, 1] >= unpadded_global_slice[1].start)  # Within Y boundaries
+            & (cell_proposals[:, 1] <= unpadded_global_slice[1].stop)
+            & (cell_proposals[:, 2] >= unpadded_global_slice[2].start)  # Within X boundaries
+            & (cell_proposals[:, 2] <= unpadded_global_slice[2].stop)
+        ]
+        
+        global_pos_name = "_".join([f"{ORIG_AXIS_ORDER[idx]}_{sl.start}_{sl.stop}" for idx, sl in enumerate(unpadded_global_slice)])
+        
+        if proposals_in_block.shape[0]:
 
-        del model
-        K.clear_session()
-        gc.collect()
+            for proposal in proposals_in_block:
+                local_coord_proposal = proposal[:3] - np.array(global_coord_positions_start[0][1:])
 
-        memory_usage = process.memory_info().rss / 1024**3
-        print(f"Currently using {memory_usage} GB of RAM")
+                # ZYX coord order
+                local_coord_proposal = local_coord_proposal.astype(np.int32)
+
+                extracted_block = extract_centered_3d_block(
+                    big_block=data_block,
+                    center=local_coord_proposal,
+                    size=(cube_depth, cube_height, cube_width),
+                    pad_value=0
+                )
+                # Changing orientation from DZYX to XYZD for cellfinder
+                extracted_block = extracted_block.transpose(-1, -2, -3, -4)
+                blocks_to_classify.append(
+                    extracted_block
+                )
+                picked_proposals.append(proposal)
+                curr_blocks += 1
+        
+        if curr_blocks >= max_blocks and len(blocks_to_classify) == len(picked_proposals):
+            blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
+            
+            picked_proposals = np.array(picked_proposals, dtype=np.uint32)
+            predictions_raw = model.predict(blocks_to_classify)
+            predictions = predictions_raw.round()
+            predictions = predictions.astype("uint16")
+
+            predictions = np.argmax(predictions, axis=1)
+
+            cell_likelihood = []
+            for idx, proposal in enumerate(picked_proposals):
+                cell_type = predictions[idx] + 1
+
+                cell_z, cell_y, cell_x = upsample_position(
+                    proposal[:3],
+                    downsample_factor=smartspim_config['downsample']
+                )
+
+                cell_likelihood.append(
+                    [cell_x, cell_y, cell_z, cell_type, predictions_raw[idx][1]]
+                )
+
+            cell_likelihood = np.array(cell_likelihood)
+
+            all_cells_df = pd.DataFrame(
+                cell_likelihood, columns=["x", "y", "z", "Class", "Cell Likelihood"]
+            )
+
+            all_cells_df.to_csv(os.path.join(smartspim_config["metadata_path"], f"classified_block_{global_pos_name}_count_{str(predictions.shape[0])}.csv"))
+            curr_blocks = 0
+            picked_proposals = []
+            blocks_to_classify = []
+            
+        else:
+            logger.info(f"No proposals found in {global_pos_name}!")
 
     end_date_time = datetime.now()
 
@@ -236,14 +405,16 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
             input_location=str(image_path),
             output_location=str(smartspim_config["metadata_path"]),
             outputs={},
-            code_url="https://github.com/AllenNeuralDynamics/aind-SmartSPIM-classification",
+            code_url="https://github.com/AllenNeuralDynamics/aind-smartspim-classification",
             code_version=__version__,
             parameters={
-                "chunk_step": chunk_step,
                 "image_path": str(image_path),
                 "background_path": str(background_path),
                 "mask_path": str(mask_path),
                 "smartspim_cell_config": smartspim_config,
+                "target_size_mb": target_size_mb,
+                "prediction_chunksize": prediction_chunksize,
+                "overlap_prediction_chunksize": overlap_prediction_chunksize,
             },
             notes=f"Classifying channel in path: {image_path}",
         )
@@ -252,32 +423,14 @@ def cell_classification(smartspim_config: dict, logger: logging.Logger):
     return str(image_path), data_processes
 
 
-def merge_xml(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
-    """
-    Saves list of all classified cells to XML
-    """
-
-    # load temporary files and save to a single list
-    logger.info(f"Reading XMLS from cells path: {metadata_path}")
-    cells = []
-    tmp_files = glob(metadata_path + "/classified_block_*.xml")
-
-    for f in natsorted(tmp_files):
-        try:
-            cells.extend(get_cells(f))
-        except:
-            pass
-
-    # save list of all cells
-    save_cells(
-        cells=cells,
-        xml_file_path=os.path.join(save_path, "classified_cells.xml"),
-    )
-
-
 def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
     """
     Saves list of all cell locations and likelihoods to CSV
+    
+    Returns
+    -------
+    str
+        Path where the merged csv was stored
     """
 
     # load temporary files and save to a single list
@@ -294,7 +447,9 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     # save list of all cells
     df = pd.concat(cells)
     df = df.reset_index(drop=True)
-    df.to_csv(os.path.join(save_path, "cell_likelihoods.csv"))
+    output_csv = os.path.join(save_path, "cell_likelihoods.csv")
+    df.to_csv(output_csv)
+    return output_csv
 
 def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
     """
@@ -324,8 +479,6 @@ def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
     df_out.to_csv(
         os.path.join(save_path, "cell_likelihood_metrics.csv")
     )
-
-    return
 
 def generate_neuroglancer_link(
     image_path: str,
@@ -365,7 +518,11 @@ def generate_neuroglancer_link(
     """
 
     logger.info(f"Reading cells from {classified_cells_path}")
-    cells = get_points_from_xml(classified_cells_path)
+    df_cells = pd.read_csv(classified_cells_path)
+    df_cells = df_cells.loc[df_cells['Class'] == 2, :]
+    df_cells = df_cells[['x', 'y', 'z']]
+    
+    cells = df_cells.to_dict(orient="records")
 
     output_precomputed = os.path.join(output, "visualization/classified_precomputed")
     json_name = os.path.join(output, "visualization/neuroglancer_config.json")
@@ -433,6 +590,7 @@ def main(
     output_segmented_folder: PathLike,
     intermediate_segmented_folder: PathLike,
     smartspim_config: dict,
+    cell_proposals
 ):
     """
     This function detects cells
@@ -484,21 +642,17 @@ def main(
     profile_process.start()
 
     # run cell detection
-    image_path, data_processes = cell_classification(
-        smartspim_config=smartspim_config, logger=logger
+    image_path, data_processes = cell_classification_improved(
+        smartspim_config=smartspim_config, logger=logger, cell_proposals=cell_proposals
     )
 
     # merge block .xmls and .csvs into single file
-    merge_xml(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
-    merge_csv(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
+    # merge_xml(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
+    classified_cells_path = merge_csv(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
 
     # generate cumulative metrics
     cumulative_likelihoods(smartspim_config["save_path"], logger)
 
-    # Generating neuroglancer precomputed format
-    classified_cells_path = os.path.join(
-        smartspim_config["save_path"], "classified_cells.xml"
-    )
     image_path = os.path.abspath(
         f"{smartspim_config['input_data']}/{smartspim_config['input_channel']}"
     )
@@ -518,7 +672,7 @@ def main(
         data_processes=data_processes,
         dest_processing=str(smartspim_config["metadata_path"]),
         processor_full_name="Nicholas Lusk",
-        pipeline_version="1.5.0",
+        pipeline_version="3.0.0",
     )
 
     # Getting tracked resources and plotting image

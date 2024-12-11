@@ -9,11 +9,12 @@ import shutil
 from glob import glob
 from pathlib import Path
 from typing import List, Tuple
+import numpy as np
+import torch
 
 from aind_smartspim_classification import classification
 from aind_smartspim_classification.params import get_yaml
 from aind_smartspim_classification.utils import utils
-
 
 def get_data_config(
     data_folder: str,
@@ -166,8 +167,18 @@ def run():
             f"We miss the following files in the capsule input: {missing_files}"
         )
 
-    pipeline_config, smartspim_dataset_name = get_data_config(data_folder=data_folder)
-
+    pipeline_config, smartspim_dataset_name = get_data_config(
+        data_folder=data_folder,
+        processing_manifest_path="SmartSPIM_698928_2023-10-03_04-48-54/derivatives/processing_manifest.json",
+        data_description_path="SmartSPIM_698928_2023-10-03_04-48-54/data_description.json"
+    )
+    # Remove this after
+    pipeline_config = pipeline_config['pipeline_processing']
+    pipeline_config['segmentation']['input_data'] = f'{data_folder}/SmartSPIM_698928_2023-10-03_04-48-54_stitched_2024-11-12_18-16-50/image_tile_fusing/OMEZarr'
+    pipeline_config['segmentation']['channel'] = "Ex_488_Em_525"
+    pipeline_config['segmentation']['background_channel'] = "Ex_639_Em_660"
+    
+    
     # get default configs
     mode = str(sys.argv[1:])
     mode = mode.replace("[", "").replace("]", "").casefold()
@@ -183,6 +194,8 @@ def run():
         default_config["cellfinder_params"][
             "trained_model"
         ] = f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
+        #f"{data_folder}/resnet_smartspim_18_test.keras"
+        #f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
 
     elif "cytosolic":
         default_config = get_yaml(
@@ -209,8 +222,8 @@ def run():
 
     # want to shutil segmentation data to results folder if detection was run
     default_config[
-            "metadata_path"
-        ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
+        "metadata_path"
+    ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
 
 
     if 'classify' in mode:
@@ -236,14 +249,20 @@ def run():
     smartspim_config["name"] = smartspim_dataset_name
 
     print("Final cell classification config: ", smartspim_config)
-
+    
+    cell_proposals = np.load(f"{data_folder}/spots.npy")
+    print("Spots proposals: ", cell_proposals.shape)
+    print("Cellfinder params: ", smartspim_config["cellfinder_params"])
+    
     classification.main(
         data_folder=Path(data_folder),
         output_segmented_folder=Path(results_folder),
         intermediate_segmented_folder=Path(scratch_folder),
         smartspim_config=smartspim_config,
+        cell_proposals=cell_proposals
     )
 
 
 if __name__ == "__main__":
+    torch.multiprocessing.set_start_method('spawn', force=True)
     run()
