@@ -14,6 +14,7 @@ import os
 from datetime import datetime
 from glob import glob
 from pathlib import Path
+import torch
 
 import dask.array as da
 import keras.backend as K
@@ -164,6 +165,29 @@ def extract_centered_3d_block(big_block, center, size, pad_value=0):
 
     return padded_block
 
+def upsample_position(position, downsample_factor):
+    """
+    Upsample a ZYX position from a downsampled image to the original resolution.
+    
+    Parameters:
+    - position: Tuple or list containing (z, y, x) coordinates in the downsampled image
+    - downsample_factor: Number of times the image was downsampled by 2 in each axis
+    
+    Returns:
+    - Upsampled (z, y, x) coordinates in the original image resolution
+    """
+    z, y, x = position
+    
+    # Upsample each coordinate by multiplying by 2^downsample_factor
+    upsampled_z = z * (2 ** downsample_factor)
+    upsampled_y = y * (2 ** downsample_factor)
+    upsampled_x = x * (2 ** downsample_factor)
+    
+    upsampled_z = upsampled_z.astype(np.uint32)
+    upsampled_y = upsampled_y.astype(np.uint32)
+    upsampled_x = upsampled_x.astype(np.uint32)
+    return upsampled_z, upsampled_y, upsampled_x
+
 def cell_classification_improved(
     smartspim_config: dict,
     logger: logging.Logger,
@@ -225,6 +249,7 @@ def cell_classification_improved(
         
     print("Loaded lazy data: ", lazy_data)
     batch_size = 1
+    dtype = np.float32
     zarr_data_loader, zarr_dataset = create_data_loader(
         lazy_data=lazy_data,
         target_size_mb=target_size_mb,
@@ -232,7 +257,7 @@ def cell_classification_improved(
         overlap_prediction_chunksize=overlap_prediction_chunksize,
         n_workers=n_workers,
         batch_size=batch_size,
-        dtype=np.float32,  # Allowed data type to process with pytorch cuda
+        dtype=dtype,  # Allowed data type to process with pytorch cuda
         super_chunksize=super_chunksize,
         lazy_callback_fn=None,  # partial_lazy_deskewing,
         logger=logger,
@@ -258,10 +283,24 @@ def cell_classification_improved(
     
     total_batches = sum(zarr_dataset.internal_slice_sum) / batch_size
     logger.info(f"Total batches: {total_batches} - cell proposals: {cell_proposals.shape[0]}")
+    
+    total_memory = torch.cuda.get_device_properties(device).total_memory
+    target_memory = int(0.75 * total_memory)
+    
+    logger.info(f"GPU total memory: {total_memory} - Target memory: {target_memory}")
+    
+    block_size_bytes = np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
+    # Estimate the number of blocks that fit within 80% memory
+    max_blocks = target_memory // block_size_bytes
+    logger.info(f"Maximum blocks: {max_blocks}")
 
+    curr_blocks = 0
+    blocks_to_classify = []
+    picked_proposals = []
+    
     for i, sample in enumerate(zarr_data_loader):
         logger.info(
-            f"Batch {i}: {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
+            f"Batch [{i} | {total_batches}]: blocks: {curr_blocks} - Max blocks: {max_blocks} {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
         )
         
         data_block = sample.batch_tensor[0, ...]#.permute(-1, -2, -3, -4)
@@ -298,7 +337,6 @@ def cell_classification_improved(
         
         if proposals_in_block.shape[0]:
 
-            blocks_to_classify = []
             for proposal in proposals_in_block:
                 local_coord_proposal = proposal[:3] - np.array(global_coord_positions_start[0][1:])
 
@@ -316,8 +354,13 @@ def cell_classification_improved(
                 blocks_to_classify.append(
                     extracted_block
                 )
-
+                picked_proposals.append(proposal)
+                curr_blocks += 1
+        
+        if curr_blocks >= max_blocks and len(blocks_to_classify) == len(picked_proposals):
             blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
+            
+            picked_proposals = np.array(picked_proposals, dtype=np.uint32)
             predictions_raw = model.predict(blocks_to_classify)
             predictions = predictions_raw.round()
             predictions = predictions.astype("uint16")
@@ -325,12 +368,13 @@ def cell_classification_improved(
             predictions = np.argmax(predictions, axis=1)
 
             cell_likelihood = []
-            for idx, proposal in enumerate(proposals_in_block):
+            for idx, proposal in enumerate(picked_proposals):
                 cell_type = predictions[idx] + 1
 
-                cell_x = ( (proposal[-1]) * 2**smartspim_config['downsample'] ).astype(np.uint32)
-                cell_y = ( (proposal[-2]) * 2**smartspim_config['downsample'] ).astype(np.uint32)
-                cell_z = ( (proposal[-3]) * 2**smartspim_config['downsample'] ).astype(np.uint32)
+                cell_z, cell_y, cell_x = upsample_position(
+                    proposal[:3],
+                    downsample_factor=smartspim_config['downsample']
+                )
 
                 cell_likelihood.append(
                     [cell_x, cell_y, cell_z, cell_type, predictions_raw[idx][1]]
@@ -343,7 +387,10 @@ def cell_classification_improved(
             )
 
             all_cells_df.to_csv(os.path.join(smartspim_config["metadata_path"], f"classified_block_{global_pos_name}_count_{str(predictions.shape[0])}.csv"))
-
+            curr_blocks = 0
+            picked_proposals = []
+            blocks_to_classify = []
+            
         else:
             logger.info(f"No proposals found in {global_pos_name}!")
 
@@ -625,7 +672,7 @@ def main(
         data_processes=data_processes,
         dest_processing=str(smartspim_config["metadata_path"]),
         processor_full_name="Nicholas Lusk",
-        pipeline_version="1.5.0",
+        pipeline_version="3.0.0",
     )
 
     # Getting tracked resources and plotting image

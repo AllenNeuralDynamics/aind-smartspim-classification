@@ -193,7 +193,8 @@ def run():
         )
         default_config["cellfinder_params"][
             "trained_model"
-        ] = f"{data_folder}/resnet_smartspim_18_test.keras"
+        ] = f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
+        #f"{data_folder}/resnet_smartspim_18_test.keras"
         #f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
 
     elif "cytosolic":
