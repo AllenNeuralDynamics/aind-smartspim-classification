@@ -15,6 +15,35 @@ import torch
 from aind_smartspim_classification import classification
 from aind_smartspim_classification.params import get_yaml
 from aind_smartspim_classification.utils import utils
+import xml.etree.ElementTree as ET
+
+def parse_cell_xml(xml_path: str) -> np.array:
+    """
+    Parses a XML with cell proposals coming from
+    the aind-smartspim-segmentation capsule.
+
+    Returns
+    -------
+    np.array
+        Array with the cell proposals in order ZYX
+    """
+
+    # Load and parse the XML file
+    tree = ET.parse(xml_path)  # Replace 'file.xml' with your file path
+    root = tree.getroot()
+
+    # Extract image filename
+    image_filename = root.find('./Image_Properties/Image_Filename').text
+
+    # Extract marker data
+    marker_data = []
+    for marker in root.findall('./Marker_Data/Marker_Type/Marker'):
+        marker_x = int(marker.find('MarkerX').text)
+        marker_y = int(marker.find('MarkerY').text)
+        marker_z = int(marker.find('MarkerZ').text)
+        marker_data.append([marker_z, marker_y, marker_x])
+    
+    return np.array(marker_data, dtype=np.uint32)
 
 def get_data_config(
     data_folder: str,
@@ -240,7 +269,10 @@ def run():
 
     print("Final cell classification config: ", smartspim_config)
     
-    cell_proposals = np.load(f"{data_folder}/spots.npy")
+    # Remove comment when new detection is deployed
+    # cell_proposals = np.load(f"{data_folder}/spots.npy")
+    cell_proposals = parse_cell_xml(f"{data_folder}/detected_cells.xml")
+
     print("Spots proposals: ", cell_proposals.shape)
     print("Cellfinder params: ", smartspim_config["cellfinder_params"])
     
