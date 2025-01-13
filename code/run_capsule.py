@@ -271,7 +271,7 @@ def run():
     
     # Remove comment when new detection is deployed
     # cell_proposals = np.load(f"{data_folder}/spots.npy")
-    cell_proposals = parse_cell_xml(f"{data_folder}/detected_cells.xml")
+    cell_proposals = parse_cell_xml(f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/detected_cells.xml")
 
     print("Spots proposals: ", cell_proposals.shape)
     print("Cellfinder params: ", smartspim_config["cellfinder_params"])
