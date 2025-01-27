@@ -14,25 +14,25 @@ import os
 from datetime import datetime
 from glob import glob
 from pathlib import Path
-import torch
 
 import dask.array as da
+import keras
 import keras.backend as K
 import numpy as np
 import pandas as pd
 import psutil
+import torch
 from aind_data_schema.core.processing import DataProcess, ProcessName
-import keras
+from aind_large_scale_prediction.generator.dataset import create_data_loader
+from aind_large_scale_prediction.generator.utils import (
+    concatenate_lazy_data, recover_global_position, unpad_global_coords)
+from aind_large_scale_prediction.io import ImageReaderFactory
 # from cellfinder.core.classify.tools import get_model
 # from cellfinder.core.train.train_yml import models
 # from imlib.IO.cells import get_cells, save_cells
 from natsort import natsorted
 from ng_link import NgState
 from ng_link.ng_state import get_points_from_xml
-from aind_large_scale_prediction.generator.utils import (
-    concatenate_lazy_data, recover_global_position, unpad_global_coords)
-from aind_large_scale_prediction.io import ImageReaderFactory
-from aind_large_scale_prediction.generator.dataset import create_data_loader
 
 from .__init__ import __version__
 from ._shared.types import PathLike
@@ -93,6 +93,7 @@ def calculate_offsets(blocks, chunk_size):
                 )
     return offsets
 
+
 def extract_centered_3d_block(big_block, center, size, pad_value=0):
     """
     Extract a centered 3D block around a specified center and pad it if needed.
@@ -135,7 +136,7 @@ def extract_centered_3d_block(big_block, center, size, pad_value=0):
         :,
         z_start_valid:z_end_valid,
         y_start_valid:y_end_valid,
-        x_start_valid:x_end_valid
+        x_start_valid:x_end_valid,
     ]
 
     # Compute padding widths for each dimension
@@ -146,7 +147,7 @@ def extract_centered_3d_block(big_block, center, size, pad_value=0):
     z_pad_after = max(0, z_end - Z)
     y_pad_after = max(0, y_end - Y)
     x_pad_after = max(0, x_end - X)
-    
+
     pad_width = (
         (0, 0),
         (z_pad_before, z_pad_after),
@@ -165,42 +166,44 @@ def extract_centered_3d_block(big_block, center, size, pad_value=0):
 
     return padded_block
 
+
 def upsample_position(position, downsample_factor):
     """
     Upsample a ZYX position from a downsampled image to the original resolution.
-    
+
     Parameters:
     - position: Tuple or list containing (z, y, x) coordinates in the downsampled image
     - downsample_factor: Number of times the image was downsampled by 2 in each axis
-    
+
     Returns:
     - Upsampled (z, y, x) coordinates in the original image resolution
     """
     z, y, x = position
-    
+
     # Upsample each coordinate by multiplying by 2^downsample_factor
-    upsampled_z = z * (2 ** downsample_factor)
-    upsampled_y = y * (2 ** downsample_factor)
-    upsampled_x = x * (2 ** downsample_factor)
-    
+    upsampled_z = z * (2**downsample_factor)
+    upsampled_y = y * (2**downsample_factor)
+    upsampled_x = x * (2**downsample_factor)
+
     upsampled_z = upsampled_z.astype(np.uint32)
     upsampled_y = upsampled_y.astype(np.uint32)
     upsampled_x = upsampled_x.astype(np.uint32)
     return upsampled_z, upsampled_y, upsampled_x
 
+
 def cell_classification_improved(
     smartspim_config: dict,
     logger: logging.Logger,
     cell_proposals,
-    prediction_chunksize = (128, 128, 128),
+    prediction_chunksize=(128, 128, 128),
     target_size_mb=2048,
     n_workers=0,
     super_chunksize=None,
 ):
     start_date_time = datetime.now()
-    
+
     data_processes = []
-    
+
     image_path = Path(smartspim_config["input_data"]).joinpath(
         f"{smartspim_config['input_channel']}"
     )
@@ -213,15 +216,17 @@ def cell_classification_improved(
         f"{smartspim_config['input_channel']}/{smartspim_config['mask_scale']}"
     )
 
-    print(f" Image Path: {image_path} -- mask path: {mask_path} - scale: {smartspim_config['downsample']}")
-    
+    print(
+        f" Image Path: {image_path} -- mask path: {mask_path} - scale: {smartspim_config['downsample']}"
+    )
+
     device = None
 
     pin_memory = True
     if device is not None:
         pin_memory = False
         multiprocessing.set_start_method("spawn", force=True)
-        
+
     axis_pad = 6
     overlap_prediction_chunksize = (axis_pad, axis_pad, axis_pad)
 
@@ -229,7 +234,10 @@ def cell_classification_improved(
         logger.info(f"Using background path in {background_path}")
         lazy_data = concatenate_lazy_data(
             dataset_paths=[image_path, background_path],
-            multiscales=[smartspim_config['downsample'], smartspim_config['downsample']],
+            multiscales=[
+                smartspim_config["downsample"],
+                smartspim_config["downsample"],
+            ],
             concat_axis=-4,
         )
         overlap_prediction_chunksize = (0, axis_pad, axis_pad, axis_pad)
@@ -243,10 +251,14 @@ def cell_classification_improved(
         # No segmentation mask
         lazy_data = (
             ImageReaderFactory()
-            .create(data_path=str(image_path), parse_path=False, multiscale=smartspim_config['downsample'])
+            .create(
+                data_path=str(image_path),
+                parse_path=False,
+                multiscale=smartspim_config["downsample"],
+            )
             .as_dask_array()
         )
-        
+
     print("Loaded lazy data: ", lazy_data)
     batch_size = 1
     dtype = np.float32
@@ -271,25 +283,31 @@ def cell_classification_improved(
     logger.info(
         f"Running cell classification in chunked data. Prediction chunksize: {prediction_chunksize} - Overlap chunksize: {overlap_prediction_chunksize}"
     )
-    
+
     cube_width = smartspim_config["cellfinder_params"]["cube_width"]
     cube_height = smartspim_config["cellfinder_params"]["cube_height"]
     cube_depth = smartspim_config["cellfinder_params"]["cube_depth"]
-    
+
     # Load model defaults to inference mode
-    model = keras.models.load_model(smartspim_config["cellfinder_params"]["trained_model"])
+    model = keras.models.load_model(
+        smartspim_config["cellfinder_params"]["trained_model"]
+    )
     model.trainable = False
     ORIG_AXIS_ORDER = ["Z", "Y", "X"]
-    
+
     total_batches = sum(zarr_dataset.internal_slice_sum) / batch_size
-    logger.info(f"Total batches: {total_batches} - cell proposals: {cell_proposals.shape[0]}")
-    
+    logger.info(
+        f"Total batches: {total_batches} - cell proposals: {cell_proposals.shape[0]}"
+    )
+
     total_memory = torch.cuda.get_device_properties(device).total_memory
     target_memory = int(0.75 * total_memory)
-    
+
     logger.info(f"GPU total memory: {total_memory} - Target memory: {target_memory}")
-    
-    block_size_bytes = np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
+
+    block_size_bytes = (
+        np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
+    )
     # Estimate the number of blocks that fit within 80% memory
     max_blocks = target_memory // block_size_bytes
     logger.info(f"Maximum blocks: {max_blocks}")
@@ -297,13 +315,15 @@ def cell_classification_improved(
     curr_blocks = 0
     blocks_to_classify = []
     picked_proposals = []
-    
+
+    # Zarr at a downsampled resolution
+    # Cell locations should be at this level
     for i, sample in enumerate(zarr_data_loader):
         logger.info(
             f"Batch [{i} | {total_batches}]: blocks: {curr_blocks} - Max blocks: {max_blocks} {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
         )
-        
-        data_block = sample.batch_tensor[0, ...]#.permute(-1, -2, -3, -4)
+
+        data_block = sample.batch_tensor[0, ...]  # .permute(-1, -2, -3, -4)
         batch_super_chunk = sample.batch_super_chunk[0]
         batch_internal_slice = sample.batch_internal_slice
 
@@ -320,25 +340,40 @@ def cell_classification_improved(
             global_coord_pos=global_coord_pos[-3:],
             block_shape=data_block.shape[-3:],
             overlap_prediction_chunksize=overlap_prediction_chunksize[-3:],
-            dataset_shape=zarr_dataset.lazy_data.shape[-3:],  # zarr_dataset.lazy_data.shape,
+            dataset_shape=zarr_dataset.lazy_data.shape[
+                -3:
+            ],  # zarr_dataset.lazy_data.shape,
         )
         # print("Global pos: ", global_coord_pos, unpadded_global_slice, data_block.shape)
-        
+
         proposals_in_block = cell_proposals[
-            (cell_proposals[:, 0] >= unpadded_global_slice[0].start)  # within Z boundaries
+            (
+                cell_proposals[:, 0] >= unpadded_global_slice[0].start
+            )  # within Z boundaries
             & (cell_proposals[:, 0] <= unpadded_global_slice[0].stop)
-            & (cell_proposals[:, 1] >= unpadded_global_slice[1].start)  # Within Y boundaries
+            & (
+                cell_proposals[:, 1] >= unpadded_global_slice[1].start
+            )  # Within Y boundaries
             & (cell_proposals[:, 1] <= unpadded_global_slice[1].stop)
-            & (cell_proposals[:, 2] >= unpadded_global_slice[2].start)  # Within X boundaries
+            & (
+                cell_proposals[:, 2] >= unpadded_global_slice[2].start
+            )  # Within X boundaries
             & (cell_proposals[:, 2] <= unpadded_global_slice[2].stop)
         ]
-        
-        global_pos_name = "_".join([f"{ORIG_AXIS_ORDER[idx]}_{sl.start}_{sl.stop}" for idx, sl in enumerate(unpadded_global_slice)])
-        
+
+        global_pos_name = "_".join(
+            [
+                f"{ORIG_AXIS_ORDER[idx]}_{sl.start}_{sl.stop}"
+                for idx, sl in enumerate(unpadded_global_slice)
+            ]
+        )
+
         if proposals_in_block.shape[0]:
 
             for proposal in proposals_in_block:
-                local_coord_proposal = proposal[:3] - np.array(global_coord_positions_start[0][1:])
+                local_coord_proposal = proposal[:3] - np.array(
+                    global_coord_positions_start[0][1:]
+                )
 
                 # ZYX coord order
                 local_coord_proposal = local_coord_proposal.astype(np.int32)
@@ -347,19 +382,19 @@ def cell_classification_improved(
                     big_block=data_block,
                     center=local_coord_proposal,
                     size=(cube_depth, cube_height, cube_width),
-                    pad_value=0
+                    pad_value=0,
                 )
                 # Changing orientation from DZYX to XYZD for cellfinder
                 extracted_block = extracted_block.transpose(-1, -2, -3, -4)
-                blocks_to_classify.append(
-                    extracted_block
-                )
+                blocks_to_classify.append(extracted_block)
                 picked_proposals.append(proposal)
                 curr_blocks += 1
-        
-        if curr_blocks >= max_blocks and len(blocks_to_classify) == len(picked_proposals):
+
+        if curr_blocks >= max_blocks and len(blocks_to_classify) == len(
+            picked_proposals
+        ):
             blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
-            
+
             picked_proposals = np.array(picked_proposals, dtype=np.uint32)
             predictions_raw = model.predict(blocks_to_classify)
             predictions = predictions_raw.round()
@@ -372,8 +407,7 @@ def cell_classification_improved(
                 cell_type = predictions[idx] + 1
 
                 cell_z, cell_y, cell_x = upsample_position(
-                    proposal[:3],
-                    downsample_factor=smartspim_config['downsample']
+                    proposal[:3], downsample_factor=smartspim_config["downsample"]
                 )
 
                 cell_likelihood.append(
@@ -386,11 +420,16 @@ def cell_classification_improved(
                 cell_likelihood, columns=["x", "y", "z", "Class", "Cell Likelihood"]
             )
 
-            all_cells_df.to_csv(os.path.join(smartspim_config["metadata_path"], f"classified_block_{global_pos_name}_count_{str(predictions.shape[0])}.csv"))
+            all_cells_df.to_csv(
+                os.path.join(
+                    smartspim_config["metadata_path"],
+                    f"classified_block_{global_pos_name}_count_{str(predictions.shape[0])}.csv",
+                )
+            )
             curr_blocks = 0
             picked_proposals = []
             blocks_to_classify = []
-            
+
         else:
             logger.info(f"No proposals found in {global_pos_name}!")
 
@@ -426,7 +465,7 @@ def cell_classification_improved(
 def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
     """
     Saves list of all cell locations and likelihoods to CSV
-    
+
     Returns
     -------
     str
@@ -451,6 +490,7 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     df.to_csv(output_csv)
     return output_csv
 
+
 def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
     """
     Takes the cell_likelihoods.csv and creates a cumulative metric
@@ -458,27 +498,23 @@ def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
 
     logger.info(f"Reading cell likelihood CSV from cells path: {save_path}")
 
-    df = pd.read_csv(
-        os.path.join(save_path, 'cell_likelihoods.csv'),
-        index_col = 0
-    )
+    df = pd.read_csv(os.path.join(save_path, "cell_likelihoods.csv"), index_col=0)
 
-    df_cells = df.loc[df['Class'] == 2, :]
-    df_non_cells = df.loc[df['Class'] == 1, :]
-    
+    df_cells = df.loc[df["Class"] == 2, :]
+    df_non_cells = df.loc[df["Class"] == 1, :]
+
     likelihood_metrics = {
         "Cell Counts": len(df_cells),
-        "Cell Likelihood Mean": df_cells['Cell Likelihood'].mean(),
-        "Cell Likelihood STD": df_cells['Cell Likelihood'].std(),
+        "Cell Likelihood Mean": df_cells["Cell Likelihood"].mean(),
+        "Cell Likelihood STD": df_cells["Cell Likelihood"].std(),
         "Noncell Counts": len(df_non_cells),
-        "Noncell Likelihood Mean": df_non_cells['Cell Likelihood'].mean(),
-        "Noncell Likelihood STD": df_non_cells['Cell Likelihood'].std(),
+        "Noncell Likelihood Mean": df_non_cells["Cell Likelihood"].mean(),
+        "Noncell Likelihood STD": df_non_cells["Cell Likelihood"].std(),
     }
 
-    df_out = pd.DataFrame(likelihood_metrics, index=['Metrics'])
-    df_out.to_csv(
-        os.path.join(save_path, "cell_likelihood_metrics.csv")
-    )
+    df_out = pd.DataFrame(likelihood_metrics, index=["Metrics"])
+    df_out.to_csv(os.path.join(save_path, "cell_likelihood_metrics.csv"))
+
 
 def generate_neuroglancer_link(
     image_path: str,
@@ -519,9 +555,9 @@ def generate_neuroglancer_link(
 
     logger.info(f"Reading cells from {classified_cells_path}")
     df_cells = pd.read_csv(classified_cells_path)
-    df_cells = df_cells.loc[df_cells['Class'] == 2, :]
-    df_cells = df_cells[['x', 'y', 'z']]
-    
+    df_cells = df_cells.loc[df_cells["Class"] == 2, :]
+    df_cells = df_cells[["x", "y", "z"]]
+
     cells = df_cells.to_dict(orient="records")
 
     output_precomputed = os.path.join(output, "visualization/classified_precomputed")
@@ -566,9 +602,9 @@ def generate_neuroglancer_link(
     )
 
     json_state = neuroglancer_link.state
-    json_state[
-        "ng_link"
-    ] = f"https://aind-neuroglancer-sauujisjxq-uw.a.run.app#!s3://{bucket_path}/{dataset_name}/image_cell_segmentation/{channel_name}/visualization/neuroglancer_config.json"
+    json_state["ng_link"] = (
+        f"https://aind-neuroglancer-sauujisjxq-uw.a.run.app#!s3://{bucket_path}/{dataset_name}/image_cell_segmentation/{channel_name}/visualization/neuroglancer_config.json"
+    )
 
     json_state["layers"][0][
         "source"
@@ -590,7 +626,7 @@ def main(
     output_segmented_folder: PathLike,
     intermediate_segmented_folder: PathLike,
     smartspim_config: dict,
-    cell_proposals
+    cell_proposals,
 ):
     """
     This function detects cells
@@ -648,7 +684,9 @@ def main(
 
     # merge block .xmls and .csvs into single file
     # merge_xml(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
-    classified_cells_path = merge_csv(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
+    classified_cells_path = merge_csv(
+        smartspim_config["metadata_path"], smartspim_config["save_path"], logger
+    )
 
     # generate cumulative metrics
     cumulative_likelihoods(smartspim_config["save_path"], logger)

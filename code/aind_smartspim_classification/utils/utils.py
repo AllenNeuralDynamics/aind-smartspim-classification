@@ -15,7 +15,7 @@ import platform
 import subprocess
 import time
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional
 
 import dask
 import matplotlib.pyplot as plt
@@ -227,6 +227,7 @@ def find_good_blocks(img, counts, chunk, ds=3):
                 b += 1
 
     return block_dict
+
 
 def execute_command_helper(
     command: str,
@@ -541,6 +542,7 @@ def get_size(bytes, suffix: str = "B") -> str:
             return f"{bytes:.2f}{unit}{suffix}"
         bytes /= factor
 
+
 def print_system_information(logger: logging.Logger):
     """
     Prints system information
@@ -622,6 +624,7 @@ def print_system_information(logger: logging.Logger):
     net_io = psutil.net_io_counters()
     logger.info(f"Total Bytes Sent: {get_size(net_io.bytes_sent)}")
     logger.info(f"Total Bytes Received: {get_size(net_io.bytes_recv)}")
+
 
 def get_code_ocean_cpu_limit():
     """

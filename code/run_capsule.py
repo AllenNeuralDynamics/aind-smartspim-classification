@@ -4,18 +4,19 @@ in code ocean
 """
 
 import os
-import sys
 import shutil
+import sys
+import xml.etree.ElementTree as ET
 from glob import glob
 from pathlib import Path
 from typing import List, Tuple
+
 import numpy as np
 import torch
-
 from aind_smartspim_classification import classification
 from aind_smartspim_classification.params import get_yaml
 from aind_smartspim_classification.utils import utils
-import xml.etree.ElementTree as ET
+
 
 def parse_cell_xml(xml_path: str) -> np.array:
     """
@@ -33,17 +34,18 @@ def parse_cell_xml(xml_path: str) -> np.array:
     root = tree.getroot()
 
     # Extract image filename
-    image_filename = root.find('./Image_Properties/Image_Filename').text
+    image_filename = root.find("./Image_Properties/Image_Filename").text
 
     # Extract marker data
     marker_data = []
-    for marker in root.findall('./Marker_Data/Marker_Type/Marker'):
-        marker_x = int(marker.find('MarkerX').text)
-        marker_y = int(marker.find('MarkerY').text)
-        marker_z = int(marker.find('MarkerZ').text)
+    for marker in root.findall("./Marker_Data/Marker_Type/Marker"):
+        marker_x = int(marker.find("MarkerX").text)
+        marker_y = int(marker.find("MarkerY").text)
+        marker_z = int(marker.find("MarkerZ").text)
         marker_data.append([marker_z, marker_y, marker_x])
-    
+
     return np.array(marker_data, dtype=np.uint32)
+
 
 def get_data_config(
     data_folder: str,
@@ -124,12 +126,12 @@ def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict):
         Dictionary with the combined parameters
     """
 
-    default_config[
-        "input_channel"
-    ] = f"{pipeline_config['segmentation']['channel']}.zarr"
-    default_config[
-        "background_channel"
-    ] = f"{pipeline_config['segmentation']['background_channel']}.zarr"
+    default_config["input_channel"] = (
+        f"{pipeline_config['segmentation']['channel']}.zarr"
+    )
+    default_config["background_channel"] = (
+        f"{pipeline_config['segmentation']['background_channel']}.zarr"
+    )
     default_config["channel"] = pipeline_config["segmentation"]["channel"]
     default_config["input_scale"] = pipeline_config["segmentation"]["input_scale"]
     default_config["chunk_size"] = int(pipeline_config["segmentation"]["chunksize"])
@@ -163,7 +165,8 @@ def validate_capsule_inputs(input_elements: List[str]) -> List[str]:
 
     return missing_inputs
 
-def get_detection_data(results_folder, dataset, channel, bucket = 'aind-open-data'):
+
+def get_detection_data(results_folder, dataset, channel, bucket="aind-open-data"):
 
     s3_path = f"s3://{bucket}/{dataset}/image_cell_segmentation/{channel}/"
 
@@ -172,6 +175,40 @@ def get_detection_data(results_folder, dataset, channel, bucket = 'aind-open-dat
         f"aws s3 cp {s3_path} {results_folder}/cell_{channel}/ --recursive"
     ):
         print(out)
+
+
+def downsample_cell_locations(coordinates: np.ndarray, downscale_factors: list):
+    """
+    Adjusts ZYX coordinates to match the resolution of a lower level in a multiscale image.
+
+    Parameters
+    ----------
+    coordinates : np.ndarray
+        A 2D array of shape (N, 3), where each row contains the ZYX coordinates
+        in the original resolution.
+
+    downscale_factors : list or tuple
+        A tuple (z_steps, y_steps, x_steps) where each value is the number of
+        downsampling steps (base 2) applied to the Z, Y, and X dimensions.
+
+    Returns
+    -------
+    np.ndarray
+        A 2D array of shape (N, 3) containing the downscaled ZYX coordinates.
+    """
+    coordinates = np.asarray(coordinates)
+    downscale_factors = np.asarray(downscale_factors)
+
+    # Compute downscale factors as 2^steps for each dimension
+    downscale_factors = np.power(2, downscale_factors)
+
+    downscaled_coordinates = coordinates / downscale_factors
+
+    # Rounding to closest integer
+    # Might move the center of cell by a couple voxels (max 3?)
+    downscaled_coordinates = np.floor(downscaled_coordinates).astype(int)
+
+    return downscaled_coordinates
 
 
 def run():
@@ -199,13 +236,13 @@ def run():
     pipeline_config, smartspim_dataset_name = get_data_config(
         data_folder=data_folder,
     )
-    
+
     # get default configs
     mode = str(sys.argv[1:])
     mode = mode.replace("[", "").replace("]", "").casefold()
 
     print(f"Classification mode: {mode}")
-    
+
     if "nuclei" in mode:
         default_config = get_yaml(
             os.path.abspath(
@@ -235,24 +272,23 @@ def run():
     )
     print("Files in path: ", os.listdir(default_config["input_data"]))
 
-    default_config[
-        "save_path"
-    ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}"
+    default_config["save_path"] = (
+        f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}"
+    )
 
     # want to shutil segmentation data to results folder if detection was run
-    default_config[
-        "metadata_path"
-    ] = f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
+    default_config["metadata_path"] = (
+        f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
+    )
 
-
-    if 'classify' in mode:
+    if "classify" in mode:
         get_detection_data(
             results_folder=results_folder,
             dataset=smartspim_dataset_name,
-            channel=pipeline_config['segmentation']['channel']
+            channel=pipeline_config["segmentation"]["channel"],
         )
 
-    if 'detect' in mode:
+    if "detect" in mode:
         shutil.copytree(
             f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/",
             f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/",
@@ -268,23 +304,31 @@ def run():
     smartspim_config["name"] = smartspim_dataset_name
 
     print("Final cell classification config: ", smartspim_config)
-    
+
     # Remove comment when new detection is deployed
     # cell_proposals = np.load(f"{data_folder}/spots.npy")
-    cell_proposals = parse_cell_xml(f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/detected_cells.xml")
+    cell_proposals = parse_cell_xml(
+        f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/detected_cells.xml"
+    )
+
+    # Downsample cells to the prediction scale
+    cell_proposals = downsample_cell_locations(
+        coordinates=cell_proposals,
+        downscale_factors=[int(smartspim_config["downsample"])] * 3,
+    )
 
     print("Spots proposals: ", cell_proposals.shape)
     print("Cellfinder params: ", smartspim_config["cellfinder_params"])
-    
+
     classification.main(
         data_folder=Path(data_folder),
         output_segmented_folder=Path(results_folder),
         intermediate_segmented_folder=Path(scratch_folder),
         smartspim_config=smartspim_config,
-        cell_proposals=cell_proposals
+        cell_proposals=cell_proposals,
     )
 
 
 if __name__ == "__main__":
-    torch.multiprocessing.set_start_method('spawn', force=True)
+    torch.multiprocessing.set_start_method("spawn", force=True)
     run()
