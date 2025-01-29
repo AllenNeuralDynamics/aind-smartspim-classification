@@ -231,7 +231,7 @@ def cell_classification_improved(
     overlap_prediction_chunksize = (axis_pad, axis_pad, axis_pad)
 
     if background_path:
-        logger.info(f"Using background path in {background_path}")
+        logger.info(f"Using background path in {background_path} with {image_path}")
         lazy_data = concatenate_lazy_data(
             dataset_paths=[image_path, background_path],
             multiscales=[
@@ -315,12 +315,12 @@ def cell_classification_improved(
     curr_blocks = 0
     blocks_to_classify = []
     picked_proposals = []
-
+    processed_cells = 0
     # Zarr at a downsampled resolution
     # Cell locations should be at this level
     for i, sample in enumerate(zarr_data_loader):
         logger.info(
-            f"Batch [{i} | {total_batches}]: blocks: {curr_blocks} - Max blocks: {max_blocks} {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
+            f"Batch [{i} | {total_batches}]: processed_cells {processed_cells} blocks: {curr_blocks} - Max blocks: {max_blocks} {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
         )
 
         data_block = sample.batch_tensor[0, ...]  # .permute(-1, -2, -3, -4)
@@ -350,15 +350,15 @@ def cell_classification_improved(
             (
                 cell_proposals[:, 0] >= unpadded_global_slice[0].start
             )  # within Z boundaries
-            & (cell_proposals[:, 0] <= unpadded_global_slice[0].stop)
+            & (cell_proposals[:, 0] < unpadded_global_slice[0].stop)
             & (
                 cell_proposals[:, 1] >= unpadded_global_slice[1].start
             )  # Within Y boundaries
-            & (cell_proposals[:, 1] <= unpadded_global_slice[1].stop)
+            & (cell_proposals[:, 1] < unpadded_global_slice[1].stop)
             & (
                 cell_proposals[:, 2] >= unpadded_global_slice[2].start
             )  # Within X boundaries
-            & (cell_proposals[:, 2] <= unpadded_global_slice[2].stop)
+            & (cell_proposals[:, 2] < unpadded_global_slice[2].stop)
         ]
 
         global_pos_name = "_".join(
@@ -369,6 +369,9 @@ def cell_classification_improved(
         )
 
         if proposals_in_block.shape[0]:
+            
+            processed_cells += proposals_in_block.shape[0]
+            logger.info(f"{proposals_in_block.shape[0]} proposals found in {global_pos_name}!")
 
             for proposal in proposals_in_block:
                 local_coord_proposal = proposal[:3] - np.array(
@@ -389,10 +392,10 @@ def cell_classification_improved(
                 blocks_to_classify.append(extracted_block)
                 picked_proposals.append(proposal)
                 curr_blocks += 1
+        else:
+            logger.info(f"No proposals found in {global_pos_name}!")
 
-        if curr_blocks >= max_blocks and len(blocks_to_classify) == len(
-            picked_proposals
-        ):
+        if curr_blocks >= max_blocks: # and len(blocks_to_classify) == len(picked_proposals)
             blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
 
             picked_proposals = np.array(picked_proposals, dtype=np.uint32)
@@ -423,15 +426,13 @@ def cell_classification_improved(
             all_cells_df.to_csv(
                 os.path.join(
                     smartspim_config["metadata_path"],
-                    f"classified_block_{global_pos_name}_count_{str(predictions.shape[0])}.csv",
+                    f"classified_block_count_{processed_cells}_end_block_{global_pos_name}.csv",
                 )
             )
             curr_blocks = 0
             picked_proposals = []
             blocks_to_classify = []
-
-        else:
-            logger.info(f"No proposals found in {global_pos_name}!")
+            logger.info(f"[PROGRESS] Total of cells at this point: {processed_cells} - Restarted vars - blocks: {len(blocks_to_classify)} proposals: {len(picked_proposals)}")
 
     end_date_time = datetime.now()
 
@@ -458,6 +459,8 @@ def cell_classification_improved(
             notes=f"Classifying channel in path: {image_path}",
         )
     )
+    
+    logger.info(f"Classification time : {end_date_time - start_date_time} minutes! Total cells: {processed_cells} - Proposals: {cell_proposals.shape}")
 
     return str(image_path), data_processes
 
@@ -476,6 +479,7 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     logger.info(f"Reading CSVs from cells path: {metadata_path}")
     cells = []
     tmp_files = glob(metadata_path + "/classified_block_*.csv")
+    logger.info(f"Merging files: {tmp_files}")
 
     for f in natsorted(tmp_files):
         try:
@@ -722,7 +726,7 @@ def main(
             cpu_percentages,
             memory_usages,
             smartspim_config["metadata_path"],
-            "smartspim_detection",
+            "smartspim_classification",
         )
 
 
