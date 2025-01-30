@@ -289,7 +289,7 @@ def create_logger(output_log_path: PathLike):
     """
 
     CURR_DATE_TIME = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    LOGS_FILE = f"{output_log_path}/fusion_log_{CURR_DATE_TIME}.log"
+    LOGS_FILE = f"{output_log_path}/classification_log_{CURR_DATE_TIME}.log"
 
     logging.basicConfig(
         level=logging.DEBUG,

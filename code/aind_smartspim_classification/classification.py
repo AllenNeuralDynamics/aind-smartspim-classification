@@ -301,7 +301,7 @@ def cell_classification_improved(
     )
 
     total_memory = torch.cuda.get_device_properties(device).total_memory
-    target_memory = int(0.75 * total_memory)
+    target_memory = int(0.80 * total_memory)
 
     logger.info(f"GPU total memory: {total_memory} - Target memory: {target_memory}")
 
@@ -370,7 +370,6 @@ def cell_classification_improved(
 
         if proposals_in_block.shape[0]:
             
-            processed_cells += proposals_in_block.shape[0]
             logger.info(f"{proposals_in_block.shape[0]} proposals found in {global_pos_name}!")
 
             for proposal in proposals_in_block:
@@ -380,13 +379,22 @@ def cell_classification_improved(
 
                 # ZYX coord order
                 local_coord_proposal = local_coord_proposal.astype(np.int32)
-
+                
                 extracted_block = extract_centered_3d_block(
                     big_block=data_block,
                     center=local_coord_proposal,
                     size=(cube_depth, cube_height, cube_width),
                     pad_value=0,
                 )
+                
+                # Comparing shapes starting pos 1, since we have two channels
+                if extracted_block.shape[1:] != (cube_depth, cube_height, cube_width):
+                    error = (
+                        "Shapes between CellFinder and extracted cube don't match."
+                        f"Block {extracted_block.shape} - CellFinder: {(cube_depth, cube_height, cube_width)}"
+                    )
+                    raise ValueError(error)
+                    
                 # Changing orientation from DZYX to XYZD for cellfinder
                 extracted_block = extracted_block.transpose(-1, -2, -3, -4)
                 blocks_to_classify.append(extracted_block)
@@ -397,13 +405,31 @@ def cell_classification_improved(
 
         if curr_blocks >= max_blocks: # and len(blocks_to_classify) == len(picked_proposals)
             blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
-
             picked_proposals = np.array(picked_proposals, dtype=np.uint32)
+            
+            if blocks_to_classify.shape[0] != picked_proposals.shape[0]:
+                error = (
+                    "Shapes between blocks and proposals are not the same:"
+                    f"blocks: {blocks_to_classify.shape} - Proposals: {picked_proposals.shape}"
+                )
+                ValueError(error)
+            
+            previous_cell_count = processed_cells
+            processed_cells += picked_proposals.shape[0]
+            curr_cell_count = processed_cells - previous_cell_count
+            
             predictions_raw = model.predict(blocks_to_classify)
             predictions = predictions_raw.round()
             predictions = predictions.astype("uint16")
 
             predictions = np.argmax(predictions, axis=1)
+            
+            if predictions.shape[0] != blocks_to_classify.shape[0]:
+                error = (
+                    "Shapes between blocks and predictions are not the same:"
+                    f"blocks: {blocks_to_classify.shape} - Proposals: {predictions.shape}"
+                )
+                ValueError(error)
 
             cell_likelihood = []
             for idx, proposal in enumerate(picked_proposals):
@@ -426,13 +452,71 @@ def cell_classification_improved(
             all_cells_df.to_csv(
                 os.path.join(
                     smartspim_config["metadata_path"],
-                    f"classified_block_count_{processed_cells}_end_block_{global_pos_name}.csv",
+                    f"classified_block_count_{curr_cell_count}_end_block_{global_pos_name}.csv",
                 )
             )
             curr_blocks = 0
             picked_proposals = []
             blocks_to_classify = []
             logger.info(f"[PROGRESS] Total of cells at this point: {processed_cells} - Restarted vars - blocks: {len(blocks_to_classify)} proposals: {len(picked_proposals)}")
+    
+    logger.info(f"Number of blocks left to process: {curr_blocks}")
+    
+    if curr_blocks:
+        blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
+        picked_proposals = np.array(picked_proposals, dtype=np.uint32)
+
+        if blocks_to_classify.shape[0] != picked_proposals.shape[0]:
+            error = (
+                "Shapes between blocks and proposals are not the same:"
+                f"blocks: {blocks_to_classify.shape} - Proposals: {picked_proposals.shape}"
+            )
+            ValueError(error)
+
+        previous_cell_count = processed_cells
+        processed_cells += picked_proposals.shape[0]
+        curr_cell_count = processed_cells - previous_cell_count
+
+        predictions_raw = model.predict(blocks_to_classify)
+        predictions = predictions_raw.round()
+        predictions = predictions.astype("uint16")
+
+        predictions = np.argmax(predictions, axis=1)
+
+        if predictions.shape[0] != blocks_to_classify.shape[0]:
+            error = (
+                "Shapes between blocks and predictions are not the same:"
+                f"blocks: {blocks_to_classify.shape} - Proposals: {predictions.shape}"
+            )
+            ValueError(error)
+
+        cell_likelihood = []
+        for idx, proposal in enumerate(picked_proposals):
+            cell_type = predictions[idx] + 1
+
+            cell_z, cell_y, cell_x = upsample_position(
+                proposal[:3], downsample_factor=smartspim_config["downsample"]
+            )
+
+            cell_likelihood.append(
+                [cell_x, cell_y, cell_z, cell_type, predictions_raw[idx][1]]
+            )
+
+        cell_likelihood = np.array(cell_likelihood)
+
+        all_cells_df = pd.DataFrame(
+            cell_likelihood, columns=["x", "y", "z", "Class", "Cell Likelihood"]
+        )
+
+        all_cells_df.to_csv(
+            os.path.join(
+                smartspim_config["metadata_path"],
+                f"classified_block_count_{curr_cell_count}_end_block_{global_pos_name}.csv",
+            )
+        )
+        curr_blocks = 0
+        picked_proposals = []
+        blocks_to_classify = []
 
     end_date_time = datetime.now()
 
