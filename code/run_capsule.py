@@ -167,7 +167,9 @@ def validate_capsule_inputs(input_elements: List[str]) -> List[str]:
 
 
 def get_detection_data(results_folder, dataset, channel, bucket="aind-open-data"):
-    """"""
+    """
+    Gets the detection data from the bucket
+    """
 
     s3_path = f"s3://{bucket}/{dataset}/image_cell_segmentation/{channel}/"
 
@@ -212,6 +214,78 @@ def downsample_cell_locations(coordinates: np.ndarray, downscale_factors: list):
     return downscaled_coordinates
 
 
+def copy_detection_files(data_folder: str, results_folder: str, proposal_folder: str):
+    """
+    The detection files contain metadata about the
+    identification of cell proposals, runtimes and
+    visualization files.
+
+    Parameters
+    ----------
+    data_folder: str
+        Folder where the data is stored.
+
+    results_folder: str
+        Path where we want to store the results.
+
+    proposal_folder: str
+        Folder where the cell proposals are stored.
+
+    """
+    detected_metadata_path = f"{data_folder}/{proposal_folder}/metadata"
+    detected_visualization_path = f"{data_folder}/{proposal_folder}/visualization"
+
+    dest_detected_metadata_path = (
+        f"{results_folder}/{proposal_folder}/proposals_metadata"
+    )
+    dest_detected_visualization_path = (
+        f"{data_folder}/{proposal_folder}/proposals_visualization"
+    )
+
+    # If detected metadata exists, we should copy it
+    if os.path.exists(detected_metadata_path):
+        utils.create_folder(dest_dir=os.path.dirname(dest_detected_metadata_path))
+        shutil.copytree(
+            detected_metadata_path, dest_detected_metadata_path, dirs_exist_ok=True
+        )
+        print(f"Copied detection metadata to {dest_detected_metadata_path}")
+
+    else:
+        print(f"Detected metadata path not provided: {detected_metadata_path}")
+
+    # If detected visualization exists, we should copy it
+    if os.path.exists(detected_visualization_path):
+        utils.create_folder(dest_dir=os.path.dirname(dest_detected_visualization_path))
+
+        shutil.copytree(
+            detected_visualization_path,
+            dest_detected_visualization_path,
+            dirs_exist_ok=True,
+        )
+        print(f"Copied detection visualization to {dest_detected_visualization_path}")
+
+    else:
+        print(
+            f"Detected visualization path not provided: {detected_visualization_path}"
+        )
+
+    # Copying cell proposals
+    cell_proposals_path = f"{data_folder}/{proposal_folder}/detected_cells.xml"
+    dest_cell_proposals_folder = f"{results_folder}/{proposal_folder}"
+    dest_cell_proposals_path = os.path.join(
+        dest_cell_proposals_folder, "detected_cells.xml"
+    )
+
+    if os.path.exists(cell_proposals_path):
+        shutil.copy(cell_proposals_path, dest_cell_proposals_path)
+        print(
+            f"Copying cell proposals from {cell_proposals_path} to {dest_cell_proposals_path}"
+        )
+
+    else:
+        print(f"Cell proposals not found in: {cell_proposals_path}")
+
+
 def run():
     """
     Main function to execute the smartspim segmentation
@@ -237,6 +311,9 @@ def run():
     pipeline_config, smartspim_dataset_name = get_data_config(
         data_folder=data_folder,
     )
+
+    # Folder where the detection files are stored from the previous step
+    proposal_folder = f"cell_{pipeline_config['segmentation']['channel']}"
 
     # get default configs
     mode = str(sys.argv[1:])
@@ -273,14 +350,10 @@ def run():
     )
     print("Files in path: ", os.listdir(default_config["input_data"]))
 
-    default_config["save_path"] = (
-        f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}"
-    )
+    default_config["save_path"] = f"{results_folder}/{proposal_folder}"
 
     # want to shutil segmentation data to results folder if detection was run
-    default_config["metadata_path"] = (
-        f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/metadata"
-    )
+    default_config["metadata_path"] = f"{results_folder}/{proposal_folder}/metadata"
 
     if "classify" in mode:
         get_detection_data(
@@ -291,9 +364,16 @@ def run():
 
     if "detect" in mode:
         shutil.copytree(
-            f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/",
-            f"{results_folder}/cell_{pipeline_config['segmentation']['channel']}/",
+            f"{data_folder}/{proposal_folder}/",
+            f"{results_folder}/{proposal_folder}/",
         )
+
+    # Copying detection files
+    copy_detection_files(
+        data_folder=data_folder,
+        results_folder=results_folder,
+        proposal_folder=proposal_folder,
+    )
 
     print("Initial cell classification config: ", default_config)
 
@@ -309,7 +389,7 @@ def run():
     # Remove comment when new detection is deployed
     # cell_proposals = np.load(f"{data_folder}/spots.npy")
     cell_proposals = parse_cell_xml(
-        f"{data_folder}/cell_{pipeline_config['segmentation']['channel']}/detected_cells.xml"
+        f"{data_folder}/{proposal_folder}/detected_cells.xml"
     )
 
     # Downsample cells to the prediction scale
