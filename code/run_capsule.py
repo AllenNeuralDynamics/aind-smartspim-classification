@@ -34,7 +34,7 @@ def parse_cell_xml(xml_path: str) -> np.array:
     root = tree.getroot()
 
     # Extract image filename
-    image_filename = root.find("./Image_Properties/Image_Filename").text
+    # image_filename = root.find("./Image_Properties/Image_Filename").text
 
     # Extract marker data
     marker_data = []
@@ -167,6 +167,7 @@ def validate_capsule_inputs(input_elements: List[str]) -> List[str]:
 
 
 def get_detection_data(results_folder, dataset, channel, bucket="aind-open-data"):
+    """"""
 
     s3_path = f"s3://{bucket}/{dataset}/image_cell_segmentation/{channel}/"
 
@@ -220,7 +221,7 @@ def run():
     # Absolute paths of common Code Ocean folders
     data_folder = os.path.abspath("../data")
     results_folder = os.path.abspath("../results")
-    scratch_folder = os.path.abspath("../scratch")
+    # scratch_folder = os.path.abspath("../scratch")
 
     # It is assumed that these files
     # will be in the data folder
@@ -321,9 +322,6 @@ def run():
     print("Cellfinder params: ", smartspim_config["cellfinder_params"])
 
     classification.main(
-        data_folder=Path(data_folder),
-        output_segmented_folder=Path(results_folder),
-        intermediate_segmented_folder=Path(scratch_folder),
         smartspim_config=smartspim_config,
         cell_proposals=cell_proposals,
     )

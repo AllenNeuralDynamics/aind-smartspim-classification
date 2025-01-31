@@ -15,7 +15,7 @@ import platform
 import subprocess
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import dask
 import matplotlib.pyplot as plt
@@ -29,122 +29,7 @@ from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
 from scipy import ndimage as ndi
 from scipy.signal import argrelmin
 
-from .._shared.types import ArrayLike, PathLike
-
-
-def run_classify(
-    signal: ArrayLike,
-    background: ArrayLike,
-    metadata_path: PathLike,
-    count: int,
-    offset: int,
-    classify_config: dict,
-    level: int,
-    padding: int,
-    model,
-):
-    """
-    Function to run cellfinder classification
-
-    Parameters
-    ----------
-    signal : ArrayLike
-        dask array of signal channel
-    background : ArrayLike
-        dask array of bakcground channel
-    metadata_path : PathLike
-        path to where cell XMLs from segmentation are located and will be saved
-    count : int
-        the block that is being classified
-    offset: tuple
-        the x, y, z coordinates the current block is offset by
-    classify_config: dict
-        parameterization for classification model
-    level: int
-        the zarr level that the model is classifying on
-    padding: int
-        the padding that is added to each block to account for edge cells
-    model:
-        the model that is being used
-
-    Returns
-    -------
-    out: str
-        information on the classified block
-
-    """
-
-    try:
-        cell_path = os.path.join(metadata_path, f"cells_block_{str(count)}.xml")
-        cells = get_cells(cell_path)
-    except:
-        out = f"Block {count} had no cells"
-        print(out)
-        return out
-
-    offset_cells = []
-    for cell in cells:
-        x = cell.x / 2**level - offset[0] + padding
-        y = cell.y / 2**level - offset[1] + padding
-        z = cell.z / 2**level - offset[2] + padding
-        cell.x = int(round(x))
-        cell.y = int(round(y))
-        cell.z = int(round(z))
-
-        offset_cells.append(cell)
-
-    inference_generator = CubeGeneratorFromFile(
-        points=offset_cells,
-        signal_array=signal,
-        background_array=background,
-        voxel_sizes=classify_config["voxel_sizes"],
-        network_voxel_sizes=classify_config["network_voxel_sizes"],
-        batch_size=classify_config["batch_size"],
-        cube_width=classify_config["cube_width"],
-        cube_height=classify_config["cube_height"],
-        cube_depth=classify_config["cube_depth"],
-    )
-
-    predictions_raw = model.predict(
-        inference_generator,
-        use_multiprocessing=False,
-        workers=1,
-        verbose=True,
-        callbacks=None,
-    )
-
-    predictions = predictions_raw.round()
-    predictions = predictions.astype("uint16")
-
-    predictions = np.argmax(predictions, axis=1)
-    offset_class = []
-    cell_likelihood = []
-
-    # only go through the "extractable" points
-    for idx, cell in enumerate(inference_generator.ordered_points):
-        cell.type = predictions[idx] + 1
-        cell.x = (cell.x + offset[0] - padding) * 2**level
-        cell.y = (cell.y + offset[1] - padding) * 2**level
-        cell.z = (cell.z + offset[2] - padding) * 2**level
-
-        if cell.type == 2:
-            offset_class.append(cell)
-
-        cell_likelihood.append(
-            [cell.x, cell.y, cell.z, cell.type, predictions_raw[idx][1]]
-        )
-
-    df = pd.DataFrame(
-        cell_likelihood, columns=["X", "Y", "Z", "Class", "Cell Likelihood"]
-    )
-    df.to_csv(os.path.join(metadata_path, f"classified_block_{str(count)}.csv"))
-    save_cells(
-        offset_class, os.path.join(metadata_path, f"classified_block_{str(count)}.xml")
-    )
-
-    out = f"Classified {len(offset_class)} Cells in block {count}."
-
-    return out
+from .._shared.types import PathLike
 
 
 def find_good_blocks(img, counts, chunk, ds=3):
@@ -232,8 +117,7 @@ def find_good_blocks(img, counts, chunk, ds=3):
 def execute_command_helper(
     command: str,
     print_command: bool = False,
-    stdout_log_file: Optional[PathLike] = None,
-) -> None:
+):
     """
     Execute a shell command.
 
@@ -255,9 +139,6 @@ def execute_command_helper(
 
     if print_command:
         print(command)
-
-    if stdout_log_file and len(str(stdout_log_file)):
-        save_string_to_txt("$ " + command, stdout_log_file, "a")
 
     popen = subprocess.Popen(
         command, stdout=subprocess.PIPE, universal_newlines=True, shell=True
@@ -393,7 +274,7 @@ def generate_processing(
         processor_full_name=processor_full_name,
         pipeline_version=pipeline_version,
         pipeline_url="https://github.com/AllenNeuralDynamics/aind-smartspim-pipeline",
-        note="Metadata for segmentation step",
+        note="Metadata for classification step",
     )
 
     processing = Processing(

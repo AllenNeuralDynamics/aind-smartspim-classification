@@ -1,12 +1,7 @@
 """
-Created on Thu Dec  8 15:06:14 2022
-
-@author: nicholas.lusk
-
 Module for the classification of smartspim datasets
 """
 
-import gc
 import json
 import logging
 import multiprocessing
@@ -14,98 +9,53 @@ import os
 from datetime import datetime
 from glob import glob
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-import dask.array as da
 import keras
-import keras.backend as K
 import numpy as np
 import pandas as pd
-import psutil
 import torch
 from aind_data_schema.core.processing import DataProcess, ProcessName
 from aind_large_scale_prediction.generator.dataset import create_data_loader
 from aind_large_scale_prediction.generator.utils import (
     concatenate_lazy_data, recover_global_position, unpad_global_coords)
 from aind_large_scale_prediction.io import ImageReaderFactory
-# from cellfinder.core.classify.tools import get_model
-# from cellfinder.core.train.train_yml import models
-# from imlib.IO.cells import get_cells, save_cells
 from natsort import natsorted
 from ng_link import NgState
-from ng_link.ng_state import get_points_from_xml
 
-from .__init__ import __version__
+from .__init__ import __maintainers__, __pipeline_version__, __version__
 from ._shared.types import PathLike
 from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 
-def __read_zarr_image(image_path: PathLike):
-    """
-    Reads a zarr image
-
-    Parameters
-    -------------
-    image_path: PathLike
-        Path where the zarr image is located
-
-    Returns
-    -------------
-    da.core.Array
-        Dask array with the zarr image
-    """
-
-    image_path = str(image_path)
-    signal_array = da.from_zarr(image_path)
-
-    return signal_array
-
-
-def calculate_offsets(blocks, chunk_size):
-    """
-    creates list of offsets for each chunk based on its location
-    in the dask array
-
-    Parameters
-    ----------
-    blocks : tuple
-        The number of blocks in each direction (z, col, row)
-
-    chunk_size : tuple
-        The number of values along each dimention of a chunk (z, col, row)
-
-    Return
-    ------
-    offests: list
-        The offsets of each block in "C order
-    """
-    offsets = []
-    for dv in range(blocks[0]):
-        for ap in range(blocks[1]):
-            for ml in range(blocks[2]):
-                offsets.append(
-                    [
-                        chunk_size[2] * ml,
-                        chunk_size[1] * ap,
-                        chunk_size[0] * dv,
-                    ]
-                )
-    return offsets
-
-
-def extract_centered_3d_block(big_block, center, size, pad_value=0):
+def extract_centered_3d_block(
+    big_block: np.array, center: Tuple, size: Tuple, pad_value: Optional[int] = 0
+):
     """
     Extract a centered 3D block around a specified center and pad it if needed.
 
-    Parameters:
-    - big_block: numpy array of shape (Z, Y, X) representing the larger 3D block.
-    - center: tuple (z_center, y_center, x_center), the center of the block to extract.
-    - size: tuple (z_size, y_size, x_size), the size of the block to extract.
-    - pad_value: value to use for padding if the block is out of bounds.
+    Parameters
+    ----------
+    big_block: np.array
+        numpy array of shape (Z, Y, X) representing
+        the larger 3D block.
 
-    Returns:
-    - Padded block of shape (z_size, y_size, x_size).
+    center: Tuple
+        Tuple (z_center, y_center, x_center),
+        the center of the block to extract.
+
+    size: Tuple
+        (z_size, y_size, x_size), the size of the block
+        to extract.
+    pad_value: Optional[int]
+        Value to use for padding if the block is out of bounds.
+
+    Returns
+    -------
+        np.array
+            Padded block of shape (z_size, y_size, x_size).
     """
     z_center, y_center, x_center = center
     z_size, y_size, x_size = size
@@ -167,16 +117,22 @@ def extract_centered_3d_block(big_block, center, size, pad_value=0):
     return padded_block
 
 
-def upsample_position(position, downsample_factor):
+def upsample_position(position: List[int], downsample_factor: Tuple[int]):
     """
-    Upsample a ZYX position from a downsampled image to the original resolution.
+    Upsample a ZYX position from a downsampled image
+    to the original resolution.
 
-    Parameters:
-    - position: Tuple or list containing (z, y, x) coordinates in the downsampled image
-    - downsample_factor: Number of times the image was downsampled by 2 in each axis
+    Parameters
+    ----------
+    position: List[int]
+        Tuple or list containing (z, y, x) coordinates in the downsampled image
+    downsample_factor: Tuple[int]
+        Number of times the image was downsampled by 2 in each axis
 
-    Returns:
-    - Upsampled (z, y, x) coordinates in the original image resolution
+    Returns
+    -------
+    List[int]
+        Upsampled (z, y, x) coordinates in the original image resolution
     """
     z, y, x = position
 
@@ -191,15 +147,53 @@ def upsample_position(position, downsample_factor):
     return upsampled_z, upsampled_y, upsampled_x
 
 
-def cell_classification_improved(
-    smartspim_config: dict,
+def cell_classification(
+    smartspim_config: Dict,
     logger: logging.Logger,
-    cell_proposals,
-    prediction_chunksize=(128, 128, 128),
-    target_size_mb=2048,
-    n_workers=0,
-    super_chunksize=None,
+    cell_proposals: np.array,
+    prediction_chunksize: Optional[Tuple] = (128, 128, 128),
+    target_size_mb: Optional[int] = 2048,
+    n_workers: Optional[int] = 0,
+    super_chunksize: Optional[Tuple] = None,
 ):
+    """
+    Runs cell classification based on a set of proposals
+    in a whole lightsheet brain.
+
+    Parameters
+    ----------
+    smartspim_config: Dict
+        Dictionary with the configuration to process
+        a whole smartspim brain with cell proposals.
+
+    logger: logging.Logger,
+        Logging object
+
+    cell_proposals: np.array
+        Proposals in the whole brain. These should be
+        ZYX coordinates.
+
+    prediction_chunksize: Optional[Tuple]
+        Chunksize that will be used to run predictions on
+        blocks of data. This means that the large-scale
+        prediction package will pull a superchunk and
+        then small chunks will be pulled.
+        Default: (128, 128, 128)
+
+    target_size_mb: Optional[int] = 2048
+        Target size in MB for the shared memory compartment.
+        This is used of the superchunksize is not provided.
+
+    n_workers: Optional[int] = 0
+        Number of workers that will be processing data.
+        Leave this as 0, but if more GPUs are available,
+        there's still work to do to allow this.
+
+    super_chunksize: Optional[Tuple] = None
+        Chunksize that will be pulled from the cloud in
+        a single call. prediction_chunksize > super_chunksize.
+
+    """
     start_date_time = datetime.now()
 
     data_processes = []
@@ -718,33 +712,21 @@ def generate_neuroglancer_link(
 
 
 def main(
-    data_folder: PathLike,
-    output_segmented_folder: PathLike,
-    intermediate_segmented_folder: PathLike,
     smartspim_config: dict,
-    cell_proposals,
+    cell_proposals: np.array,
 ):
     """
     This function detects cells
 
     Parameters
     -----------
-    data_folder: PathLike
-        Path where the image data is located
-
-    output_segmented_folder: PathLike
-        Path where the OMEZarr and metadata will
-        live after fusion
-
-    intermediate_segmented_folder: PathLike
-        Path where the intermediate files
-        will live. These will not be in the final
-        folder structure. e.g., 3D fused chunks
-        from TeraStitcher
 
     smartspim_config: dict
         Dictionary with the smartspim configuration
         for that dataset
+
+    cell_proposals: np.array
+        Cell proposals from the previous step.
 
     """
 
@@ -774,7 +756,7 @@ def main(
     profile_process.start()
 
     # run cell detection
-    image_path, data_processes = cell_classification_improved(
+    image_path, data_processes = cell_classification(
         smartspim_config=smartspim_config, logger=logger, cell_proposals=cell_proposals
     )
 
@@ -805,8 +787,8 @@ def main(
     utils.generate_processing(
         data_processes=data_processes,
         dest_processing=str(smartspim_config["metadata_path"]),
-        processor_full_name="Nicholas Lusk",
-        pipeline_version="3.0.0",
+        processor_full_name=__maintainers__[-1],
+        pipeline_version=__pipeline_version__,
     )
 
     # Getting tracked resources and plotting image
