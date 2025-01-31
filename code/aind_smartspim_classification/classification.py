@@ -9,9 +9,8 @@ import os
 from datetime import datetime
 from glob import glob
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-import dask.array as da
 import keras
 import numpy as np
 import pandas as pd
@@ -29,59 +28,6 @@ from ._shared.types import PathLike
 from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-
-
-def __read_zarr_image(image_path: PathLike):
-    """
-    Reads a zarr image
-
-    Parameters
-    -------------
-    image_path: PathLike
-        Path where the zarr image is located
-
-    Returns
-    -------------
-    da.core.Array
-        Dask array with the zarr image
-    """
-
-    image_path = str(image_path)
-    signal_array = da.from_zarr(image_path)
-
-    return signal_array
-
-
-def calculate_offsets(blocks, chunk_size):
-    """
-    creates list of offsets for each chunk based on its location
-    in the dask array
-
-    Parameters
-    ----------
-    blocks : tuple
-        The number of blocks in each direction (z, col, row)
-
-    chunk_size : tuple
-        The number of values along each dimention of a chunk (z, col, row)
-
-    Return
-    ------
-    offests: list
-        The offsets of each block in "C order
-    """
-    offsets = []
-    for dv in range(blocks[0]):
-        for ap in range(blocks[1]):
-            for ml in range(blocks[2]):
-                offsets.append(
-                    [
-                        chunk_size[2] * ml,
-                        chunk_size[1] * ap,
-                        chunk_size[0] * dv,
-                    ]
-                )
-    return offsets
 
 
 def extract_centered_3d_block(
@@ -171,16 +117,22 @@ def extract_centered_3d_block(
     return padded_block
 
 
-def upsample_position(position, downsample_factor):
+def upsample_position(position: List[int], downsample_factor: Tuple[int]):
     """
-    Upsample a ZYX position from a downsampled image to the original resolution.
+    Upsample a ZYX position from a downsampled image
+    to the original resolution.
 
-    Parameters:
-    - position: Tuple or list containing (z, y, x) coordinates in the downsampled image
-    - downsample_factor: Number of times the image was downsampled by 2 in each axis
+    Parameters
+    ----------
+    position: List[int]
+        Tuple or list containing (z, y, x) coordinates in the downsampled image
+    downsample_factor: Tuple[int]
+        Number of times the image was downsampled by 2 in each axis
 
-    Returns:
-    - Upsampled (z, y, x) coordinates in the original image resolution
+    Returns
+    -------
+    List[int]
+        Upsampled (z, y, x) coordinates in the original image resolution
     """
     z, y, x = position
 
@@ -195,15 +147,53 @@ def upsample_position(position, downsample_factor):
     return upsampled_z, upsampled_y, upsampled_x
 
 
-def cell_classification_improved(
-    smartspim_config: dict,
+def cell_classification(
+    smartspim_config: Dict,
     logger: logging.Logger,
-    cell_proposals,
-    prediction_chunksize=(128, 128, 128),
-    target_size_mb=2048,
-    n_workers=0,
-    super_chunksize=None,
+    cell_proposals: np.array,
+    prediction_chunksize: Optional[Tuple] = (128, 128, 128),
+    target_size_mb: Optional[int] = 2048,
+    n_workers: Optional[int] = 0,
+    super_chunksize: Optional[Tuple] = None,
 ):
+    """
+    Runs cell classification based on a set of proposals
+    in a whole lightsheet brain.
+
+    Parameters
+    ----------
+    smartspim_config: Dict
+        Dictionary with the configuration to process
+        a whole smartspim brain with cell proposals.
+
+    logger: logging.Logger,
+        Logging object
+
+    cell_proposals: np.array
+        Proposals in the whole brain. These should be
+        ZYX coordinates.
+
+    prediction_chunksize: Optional[Tuple]
+        Chunksize that will be used to run predictions on
+        blocks of data. This means that the large-scale
+        prediction package will pull a superchunk and
+        then small chunks will be pulled.
+        Default: (128, 128, 128)
+
+    target_size_mb: Optional[int] = 2048
+        Target size in MB for the shared memory compartment.
+        This is used of the superchunksize is not provided.
+
+    n_workers: Optional[int] = 0
+        Number of workers that will be processing data.
+        Leave this as 0, but if more GPUs are available,
+        there's still work to do to allow this.
+
+    super_chunksize: Optional[Tuple] = None
+        Chunksize that will be pulled from the cloud in
+        a single call. prediction_chunksize > super_chunksize.
+
+    """
     start_date_time = datetime.now()
 
     data_processes = []
@@ -766,7 +756,7 @@ def main(
     profile_process.start()
 
     # run cell detection
-    image_path, data_processes = cell_classification_improved(
+    image_path, data_processes = cell_classification(
         smartspim_config=smartspim_config, logger=logger, cell_proposals=cell_proposals
     )
 
