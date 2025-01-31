@@ -1,12 +1,7 @@
 """
-Created on Thu Dec  8 15:06:14 2022
-
-@author: nicholas.lusk
-
 Module for the classification of smartspim datasets
 """
 
-import gc
 import json
 import logging
 import multiprocessing
@@ -14,27 +9,22 @@ import os
 from datetime import datetime
 from glob import glob
 from pathlib import Path
+from typing import List, Optional, Tuple
 
 import dask.array as da
 import keras
-import keras.backend as K
 import numpy as np
 import pandas as pd
-import psutil
 import torch
 from aind_data_schema.core.processing import DataProcess, ProcessName
 from aind_large_scale_prediction.generator.dataset import create_data_loader
 from aind_large_scale_prediction.generator.utils import (
     concatenate_lazy_data, recover_global_position, unpad_global_coords)
 from aind_large_scale_prediction.io import ImageReaderFactory
-# from cellfinder.core.classify.tools import get_model
-# from cellfinder.core.train.train_yml import models
-# from imlib.IO.cells import get_cells, save_cells
 from natsort import natsorted
 from ng_link import NgState
-from ng_link.ng_state import get_points_from_xml
 
-from .__init__ import __version__
+from .__init__ import __maintainers__, __pipeline_version__, __version__
 from ._shared.types import PathLike
 from .utils import utils
 
@@ -94,18 +84,32 @@ def calculate_offsets(blocks, chunk_size):
     return offsets
 
 
-def extract_centered_3d_block(big_block, center, size, pad_value=0):
+def extract_centered_3d_block(
+    big_block: np.array, center: Tuple, size: Tuple, pad_value: Optional[int] = 0
+):
     """
     Extract a centered 3D block around a specified center and pad it if needed.
 
-    Parameters:
-    - big_block: numpy array of shape (Z, Y, X) representing the larger 3D block.
-    - center: tuple (z_center, y_center, x_center), the center of the block to extract.
-    - size: tuple (z_size, y_size, x_size), the size of the block to extract.
-    - pad_value: value to use for padding if the block is out of bounds.
+    Parameters
+    ----------
+    big_block: np.array
+        numpy array of shape (Z, Y, X) representing
+        the larger 3D block.
 
-    Returns:
-    - Padded block of shape (z_size, y_size, x_size).
+    center: Tuple
+        Tuple (z_center, y_center, x_center),
+        the center of the block to extract.
+
+    size: Tuple
+        (z_size, y_size, x_size), the size of the block
+        to extract.
+    pad_value: Optional[int]
+        Value to use for padding if the block is out of bounds.
+
+    Returns
+    -------
+        np.array
+            Padded block of shape (z_size, y_size, x_size).
     """
     z_center, y_center, x_center = center
     z_size, y_size, x_size = size
@@ -718,33 +722,21 @@ def generate_neuroglancer_link(
 
 
 def main(
-    data_folder: PathLike,
-    output_segmented_folder: PathLike,
-    intermediate_segmented_folder: PathLike,
     smartspim_config: dict,
-    cell_proposals,
+    cell_proposals: np.array,
 ):
     """
     This function detects cells
 
     Parameters
     -----------
-    data_folder: PathLike
-        Path where the image data is located
-
-    output_segmented_folder: PathLike
-        Path where the OMEZarr and metadata will
-        live after fusion
-
-    intermediate_segmented_folder: PathLike
-        Path where the intermediate files
-        will live. These will not be in the final
-        folder structure. e.g., 3D fused chunks
-        from TeraStitcher
 
     smartspim_config: dict
         Dictionary with the smartspim configuration
         for that dataset
+
+    cell_proposals: np.array
+        Cell proposals from the previous step.
 
     """
 
@@ -805,8 +797,8 @@ def main(
     utils.generate_processing(
         data_processes=data_processes,
         dest_processing=str(smartspim_config["metadata_path"]),
-        processor_full_name="Nicholas Lusk",
-        pipeline_version="3.0.0",
+        processor_full_name=__maintainers__[-1],
+        pipeline_version=__pipeline_version__,
     )
 
     # Getting tracked resources and plotting image

@@ -321,9 +321,6 @@ def run():
     print("Cellfinder params: ", smartspim_config["cellfinder_params"])
 
     classification.main(
-        data_folder=Path(data_folder),
-        output_segmented_folder=Path(results_folder),
-        intermediate_segmented_folder=Path(scratch_folder),
         smartspim_config=smartspim_config,
         cell_proposals=cell_proposals,
     )
