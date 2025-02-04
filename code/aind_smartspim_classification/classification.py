@@ -576,8 +576,16 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     # save list of all cells
     df = pd.concat(cells)
     df = df.reset_index(drop=True)
-    output_csv = os.path.join(save_path, "cell_likelihoods.csv")
+    output_csv = os.path.join(save_path, "proposals/cell_likelihoods.csv")
     df.to_csv(output_csv)
+
+    # Saving detected cells
+    df_cells = df.copy()
+    df_cells = df_cells.loc[df_cells["Class"] == 2, :]
+    df_cells = df_cells[["x", "y", "z"]]
+    output_csv = os.path.join(save_path, "detected_cells.csv")
+    df_cells.to_csv(output_csv)
+
     return output_csv
 
 
