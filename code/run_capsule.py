@@ -239,7 +239,7 @@ def copy_detection_files(data_folder: str, results_folder: str, proposal_folder:
         f"{results_folder}/{proposal_folder}/proposals_metadata"
     )
     dest_detected_visualization_path = (
-        f"{data_folder}/{proposal_folder}/proposals_visualization"
+        f"{results_folder}/{proposal_folder}/proposals_visualization"
     )
 
     # If detected metadata exists, we should copy it
