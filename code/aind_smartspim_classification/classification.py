@@ -572,11 +572,14 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
             cells.append(pd.read_csv(f, index_col=0))
         except:
             pass
+    
+    utils.create_folder(f"{save_path}/proposals")
 
     # save list of all cells
     df = pd.concat(cells)
     df = df.reset_index(drop=True)
     output_csv = os.path.join(save_path, "proposals/cell_likelihoods.csv")
+    
     df.to_csv(output_csv)
 
     # Saving detected cells
