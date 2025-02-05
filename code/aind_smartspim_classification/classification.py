@@ -596,7 +596,7 @@ def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
 
     logger.info(f"Reading cell likelihood CSV from cells path: {save_path}")
 
-    df = pd.read_csv(os.path.join(save_path, "cell_likelihoods.csv"), index_col=0)
+    df = pd.read_csv(os.path.join(save_path, "proposals/cell_likelihoods.csv"), index_col=0)
 
     df_cells = df.loc[df["Class"] == 2, :]
     df_non_cells = df.loc[df["Class"] == 1, :]

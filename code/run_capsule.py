@@ -14,7 +14,6 @@ from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import torch
-
 from aind_smartspim_classification import classification
 from aind_smartspim_classification.params import get_yaml
 from aind_smartspim_classification.utils import utils
