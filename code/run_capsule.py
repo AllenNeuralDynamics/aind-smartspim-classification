@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
+import pandas as pd
 import torch
 
 from aind_smartspim_classification import classification
@@ -215,7 +216,11 @@ def downsample_cell_locations(coordinates: np.ndarray, downscale_factors: list):
     return downscaled_coordinates
 
 
-def copy_detection_files(data_folder: str, results_folder: str, proposal_folder: str):
+def copy_detection_files(
+    data_folder: str,
+    results_folder: str,
+    proposal_folder: str,
+):
     """
     The detection files contain metadata about the
     identification of cell proposals, runtimes and
@@ -237,10 +242,10 @@ def copy_detection_files(data_folder: str, results_folder: str, proposal_folder:
     detected_visualization_path = f"{data_folder}/{proposal_folder}/visualization"
 
     dest_detected_metadata_path = (
-        f"{results_folder}/{proposal_folder}/proposals_metadata"
+        f"{results_folder}/{proposal_folder}/proposals/metadata"
     )
     dest_detected_visualization_path = (
-        f"{results_folder}/{proposal_folder}/proposals_visualization"
+        f"{results_folder}/{proposal_folder}/proposals/visualization"
     )
 
     # If detected metadata exists, we should copy it
@@ -269,22 +274,6 @@ def copy_detection_files(data_folder: str, results_folder: str, proposal_folder:
         print(
             f"Detected visualization path not provided: {detected_visualization_path}"
         )
-
-    # Copying cell proposals
-    cell_proposals_path = f"{data_folder}/{proposal_folder}/detected_cells.xml"
-    dest_cell_proposals_folder = f"{results_folder}/{proposal_folder}"
-    dest_cell_proposals_path = os.path.join(
-        dest_cell_proposals_folder, "detected_cells.xml"
-    )
-
-    if os.path.exists(cell_proposals_path):
-        shutil.copy(cell_proposals_path, dest_cell_proposals_path)
-        print(
-            f"Copying cell proposals from {cell_proposals_path} to {dest_cell_proposals_path}"
-        )
-
-    else:
-        print(f"Cell proposals not found in: {cell_proposals_path}")
 
 
 def run():
@@ -369,13 +358,6 @@ def run():
             f"{results_folder}/{proposal_folder}/",
         )
 
-    # Copying detection files
-    copy_detection_files(
-        data_folder=data_folder,
-        results_folder=results_folder,
-        proposal_folder=proposal_folder,
-    )
-
     print("Initial cell classification config: ", default_config)
 
     # combine configs
@@ -391,6 +373,13 @@ def run():
     # cell_proposals = np.load(f"{data_folder}/spots.npy")
     cell_proposals = parse_cell_xml(
         f"{data_folder}/{proposal_folder}/detected_cells.xml"
+    )
+
+    # Copying detection files
+    copy_detection_files(
+        data_folder=data_folder,
+        results_folder=results_folder,
+        proposal_folder=proposal_folder,
     )
 
     # Downsample cells to the prediction scale

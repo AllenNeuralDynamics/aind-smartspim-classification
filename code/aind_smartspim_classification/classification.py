@@ -431,7 +431,7 @@ def cell_classification(
 
             cell_likelihood = []
             for idx, proposal in enumerate(picked_proposals):
-                cell_type = predictions[idx] + 1
+                cell_type = predictions[idx]
 
                 cell_z, cell_y, cell_x = upsample_position(
                     proposal[:3], downsample_factor=smartspim_config["downsample"]
@@ -572,12 +572,24 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
             cells.append(pd.read_csv(f, index_col=0))
         except:
             pass
+    
+    utils.create_folder(f"{save_path}/proposals")
 
     # save list of all cells
     df = pd.concat(cells)
     df = df.reset_index(drop=True)
-    output_csv = os.path.join(save_path, "cell_likelihoods.csv")
+    output_csv = os.path.join(save_path, "proposals/cell_likelihoods.csv")
+    
     df.to_csv(output_csv)
+
+    # Saving detected cells
+    df_cells = df.copy()
+    df_cells = df_cells.loc[df_cells["Class"] == 1, :]
+    df_cells = df_cells[["x", "y", "z"]]
+    df_cells = df_cells.reset_index(drop=True)
+    output_csv = os.path.join(save_path, "detected_cells.csv")
+    df_cells.to_csv(output_csv)
+
     return output_csv
 
 
@@ -588,10 +600,10 @@ def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
 
     logger.info(f"Reading cell likelihood CSV from cells path: {save_path}")
 
-    df = pd.read_csv(os.path.join(save_path, "cell_likelihoods.csv"), index_col=0)
+    df = pd.read_csv(os.path.join(save_path, "proposals/cell_likelihoods.csv"), index_col=0)
 
-    df_cells = df.loc[df["Class"] == 2, :]
-    df_non_cells = df.loc[df["Class"] == 1, :]
+    df_cells = df.loc[df["Class"] == 1, :]
+    df_non_cells = df.loc[df["Class"] == 0, :]
 
     likelihood_metrics = {
         "Cell Counts": len(df_cells),
@@ -645,7 +657,6 @@ def generate_neuroglancer_link(
 
     logger.info(f"Reading cells from {classified_cells_path}")
     df_cells = pd.read_csv(classified_cells_path)
-    df_cells = df_cells.loc[df_cells["Class"] == 2, :]
     df_cells = df_cells[["x", "y", "z"]]
 
     cells = df_cells.to_dict(orient="records")
