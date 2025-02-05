@@ -661,7 +661,7 @@ def generate_neuroglancer_link(
 
     cells = df_cells.to_dict(orient="records")
 
-    output_precomputed = os.path.join(output, "visualization/classified_precomputed")
+    output_precomputed = os.path.join(output, "visualization/detected_precomputed")
     json_name = os.path.join(output, "visualization/neuroglancer_config.json")
     utils.create_folder(output_precomputed)
     print(f"Output cells precomputed: {output_precomputed}")
@@ -713,7 +713,7 @@ def generate_neuroglancer_link(
 
     json_state["layers"][1][
         "source"
-    ] = f"precomputed://s3://{bucket_path}/{dataset_name}/image_cell_segmentation/{channel_name}/visualization/classified_precomputed"
+    ] = f"precomputed://s3://{bucket_path}/{dataset_name}/image_cell_segmentation/{channel_name}/visualization/detected_precomputed"
 
     logger.info(f"Visualization link: {json_state['ng_link']}")
     output_path = os.path.join(output, json_name)
