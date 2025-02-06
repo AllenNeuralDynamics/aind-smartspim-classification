@@ -1,23 +1,25 @@
-# Start with the official TensorFlow runtime image
 FROM tensorflow/tensorflow:2.11.0-gpu
+LABEL maintainer="Camilo Laiton <camilo.laiton@alleninstitute.org>"
 
-# Set build arguments and environment variables to suppress prompts
 ARG DEBIAN_FRONTEND=noninteractive
-ENV PATH /opt/conda/bin:$PATH
 
-# Install dependencies, Miniconda, and create the Conda environment
-RUN apt-get update && apt-get install -y wget git && \
-    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /miniconda.sh && \
+RUN apt-get update && apt-get install -y --no-install-recommends wget git && \
+    wget -qO /miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \
     bash /miniconda.sh -b -p /opt/conda && \
     rm /miniconda.sh && \
-    /opt/conda/bin/conda create -n cell_seg python=3.8 -y && \
-    /opt/conda/bin/conda clean -afy && \
     apt-get remove --purge -y wget && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
-# Activate the environment and install Python packages
-RUN /opt/conda/bin/conda run -n cell_seg pip install -U --no-cache-dir \
+ENV PATH="/opt/conda/bin:$PATH"
+ENV CONDA_ENV=cell_seg
+
+RUN conda create -n $CONDA_ENV python=3.8 --no-default-packages -y && \
+    conda clean --all --yes
+
+ENV PATH="/opt/conda/envs/$CONDA_ENV/bin:$PATH"
+
+RUN pip install --no-cache-dir \
     aind-large-scale-prediction==1.0.0 \
     aind-data-schema==1.0.0 \
     aind-ng-link==1.0.6 \
@@ -26,8 +28,4 @@ RUN /opt/conda/bin/conda run -n cell_seg pip install -U --no-cache-dir \
     cellfinder>=1.0.0 \
     argschema
 
-# Set Conda's default shell for the image
-SHELL ["conda", "run", "-n", "cell_seg", "/bin/bash", "-c"]
-
-# Set default command to bash
 CMD ["bash"]
