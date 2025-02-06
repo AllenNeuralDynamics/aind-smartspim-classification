@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget git && \
 ENV PATH="/opt/conda/bin:$PATH"
 ENV CONDA_ENV=cell_seg
 
-RUN conda create -n $CONDA_ENV python=3.8 --no-default-packages -y && \
+RUN conda create -n $CONDA_ENV python=3.10 --no-default-packages -y && \
     conda clean --all --yes
 
 ENV PATH="/opt/conda/envs/$CONDA_ENV/bin:$PATH"
