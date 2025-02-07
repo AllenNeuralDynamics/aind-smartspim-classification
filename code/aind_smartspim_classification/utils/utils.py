@@ -15,12 +15,12 @@ import platform
 import subprocess
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 
 import dask
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import psutil
 from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
                                               Processing)
@@ -531,3 +531,64 @@ def get_code_ocean_cpu_limit():
     container_cpus = cfs_quota_us // cfs_period_us
     # For physical machine, the `cfs_quota_us` could be '-1'
     return psutil.cpu_count(logical=False) if container_cpus < 1 else container_cpus
+
+
+def check_path_instance(obj: object) -> bool:
+    """
+    Checks if an objects belongs to pathlib.Path subclasses.
+
+    Parameters
+    ------------------------
+
+    obj: object
+        Object that wants to be validated.
+
+    Returns
+    ------------------------
+
+    bool:
+        True if the object is an instance of Path subclass, False otherwise.
+    """
+
+    for childclass in Path.__subclasses__():
+        if isinstance(obj, childclass):
+            return True
+
+    return False
+
+
+def save_dict_as_json(
+    filename: str, dictionary: dict, verbose: Optional[bool] = False
+) -> None:
+    """
+    Saves a dictionary as a json file.
+
+    Parameters
+    ------------------------
+
+    filename: str
+        Name of the json file.
+
+    dictionary: dict
+        Dictionary that will be saved as json.
+
+    verbose: Optional[bool]
+        True if you want to print the path where the file was saved.
+
+    """
+
+    if dictionary is None:
+        dictionary = {}
+
+    else:
+        for key, value in dictionary.items():
+            # Converting path to str to dump dictionary into json
+            if check_path_instance(value):
+                # TODO fix the \\ encode problem in dump
+                dictionary[key] = str(value)
+
+    with open(filename, "w") as json_file:
+        json.dump(dictionary, json_file, indent=4)
+
+    if verbose:
+        print(f"- Json file saved: {filename}")

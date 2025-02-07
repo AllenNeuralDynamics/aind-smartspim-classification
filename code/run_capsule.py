@@ -310,7 +310,7 @@ def run():
     # Note: The dispatcher capsule creates a single config with
     # the channels. If the channel key does not exist, it means
     # there are no segmentation channels splitted
-    if channel_to_process is not None: 
+    if channel_to_process is not None:
 
         # Folder where the detection files are stored from the previous step
         proposal_folder = f"cell_{channel_to_process}"
