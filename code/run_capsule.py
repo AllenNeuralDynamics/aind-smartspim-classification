@@ -406,6 +406,9 @@ def run():
             cell_proposals=cell_proposals,
         )
 
+    else:
+        print(f"No segmentation channel, pipeline config: {pipeline_config}")
+
 
 if __name__ == "__main__":
     torch.multiprocessing.set_start_method("spawn", force=True)
