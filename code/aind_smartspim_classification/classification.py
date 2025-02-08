@@ -572,14 +572,14 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
             cells.append(pd.read_csv(f, index_col=0))
         except:
             pass
-    
+
     utils.create_folder(f"{save_path}/proposals")
 
     # save list of all cells
     df = pd.concat(cells)
     df = df.reset_index(drop=True)
     output_csv = os.path.join(save_path, "proposals/cell_likelihoods.csv")
-    
+
     df.to_csv(output_csv)
 
     # Saving detected cells
@@ -600,7 +600,9 @@ def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
 
     logger.info(f"Reading cell likelihood CSV from cells path: {save_path}")
 
-    df = pd.read_csv(os.path.join(save_path, "proposals/cell_likelihoods.csv"), index_col=0)
+    df = pd.read_csv(
+        os.path.join(save_path, "proposals/cell_likelihoods.csv"), index_col=0
+    )
 
     df_cells = df.loc[df["Class"] == 1, :]
     df_non_cells = df.loc[df["Class"] == 0, :]

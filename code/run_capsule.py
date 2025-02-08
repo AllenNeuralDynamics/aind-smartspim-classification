@@ -300,99 +300,118 @@ def run():
         data_folder=data_folder,
     )
 
-    # Folder where the detection files are stored from the previous step
-    proposal_folder = f"cell_{pipeline_config['segmentation']['channel']}"
+    segmentation_info = pipeline_config.get("segmentation")
 
-    # get default configs
-    mode = str(sys.argv[1:])
-    mode = mode.replace("[", "").replace("]", "").casefold()
+    if segmentation_info is None:
+        raise ValueError("Please, provide segmentation channels.")
 
-    print(f"Classification mode: {mode}")
+    channel_to_process = segmentation_info.get("channel")
 
-    if "nuclei" in mode:
-        default_config = get_yaml(
-            os.path.abspath(
-                "aind_smartspim_classification/params/default_classify_config.yml"
+    # Note: The dispatcher capsule creates a single config with
+    # the channels. If the channel key does not exist, it means
+    # there are no segmentation channels splitted
+    if channel_to_process is not None:
+
+        # Folder where the detection files are stored from the previous step
+        proposal_folder = f"cell_{channel_to_process}"
+
+        # get default configs
+        mode = str(sys.argv[1:])
+        mode = mode.replace("[", "").replace("]", "").casefold()
+
+        print(f"Classification mode: {mode}")
+
+        if "nuclei" in mode:
+            default_config = get_yaml(
+                os.path.abspath(
+                    "aind_smartspim_classification/params/default_classify_config.yml"
+                )
             )
-        )
-        default_config["cellfinder_params"][
-            "trained_model"
-        ] = f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
+            default_config["cellfinder_params"][
+                "trained_model"
+            ] = f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
 
-    elif "cytosolic":
-        default_config = get_yaml(
-            os.path.abspath(
-                "aind_smartspim_classification/params/cytosolic_classify_config.yml"
+        elif "cytosolic":
+            default_config = get_yaml(
+                os.path.abspath(
+                    "aind_smartspim_classification/params/cytosolic_classify_config.yml"
+                )
             )
+
+            default_config["cellfinder_params"][
+                "trained_model"
+            ] = f"{data_folder}/cytosolic_model/2024_10_09_smartspim_18_cytosolic.h5"
+        else:
+            raise NotImplementedError(f"The mode {mode} has not been implemented")
+
+        # add paths to default_config
+        default_config["input_data"] = os.path.abspath(
+            pipeline_config["segmentation"]["input_data"]
+        )
+        print("Files in path: ", os.listdir(default_config["input_data"]))
+
+        default_config["save_path"] = f"{results_folder}/{proposal_folder}"
+
+        # want to shutil segmentation data to results folder if detection was run
+        default_config["metadata_path"] = f"{results_folder}/{proposal_folder}/metadata"
+
+        if "classify" in mode:
+            get_detection_data(
+                results_folder=results_folder,
+                dataset=smartspim_dataset_name,
+                channel=pipeline_config["segmentation"]["channel"],
+            )
+
+        if "detect" in mode:
+            shutil.copytree(
+                f"{data_folder}/{proposal_folder}/",
+                f"{results_folder}/{proposal_folder}/",
+            )
+
+        print("Initial cell classification config: ", default_config)
+
+        # combine configs
+        smartspim_config = set_up_pipeline_parameters(
+            pipeline_config=pipeline_config, default_config=default_config
         )
 
-        default_config["cellfinder_params"][
-            "trained_model"
-        ] = f"{data_folder}/cytosolic_model/2024_10_09_smartspim_18_cytosolic.h5"
-    else:
-        raise NotImplementedError(f"The mode {mode} has not been implemented")
+        smartspim_config["name"] = smartspim_dataset_name
 
-    # add paths to default_config
-    default_config["input_data"] = os.path.abspath(
-        pipeline_config["segmentation"]["input_data"]
-    )
-    print("Files in path: ", os.listdir(default_config["input_data"]))
+        print("Final cell classification config: ", smartspim_config)
 
-    default_config["save_path"] = f"{results_folder}/{proposal_folder}"
+        # Remove comment when new detection is deployed
+        # cell_proposals = np.load(f"{data_folder}/spots.npy")
+        cell_proposals = parse_cell_xml(
+            f"{data_folder}/{proposal_folder}/detected_cells.xml"
+        )
 
-    # want to shutil segmentation data to results folder if detection was run
-    default_config["metadata_path"] = f"{results_folder}/{proposal_folder}/metadata"
-
-    if "classify" in mode:
-        get_detection_data(
+        # Copying detection files
+        copy_detection_files(
+            data_folder=data_folder,
             results_folder=results_folder,
-            dataset=smartspim_dataset_name,
-            channel=pipeline_config["segmentation"]["channel"],
+            proposal_folder=proposal_folder,
         )
 
-    if "detect" in mode:
-        shutil.copytree(
-            f"{data_folder}/{proposal_folder}/",
-            f"{results_folder}/{proposal_folder}/",
+        # Downsample cells to the prediction scale
+        cell_proposals = downsample_cell_locations(
+            coordinates=cell_proposals,
+            downscale_factors=[int(smartspim_config["downsample"])] * 3,
         )
 
-    print("Initial cell classification config: ", default_config)
+        print("Spots proposals: ", cell_proposals.shape)
+        print("Cellfinder params: ", smartspim_config["cellfinder_params"])
 
-    # combine configs
-    smartspim_config = set_up_pipeline_parameters(
-        pipeline_config=pipeline_config, default_config=default_config
-    )
+        classification.main(
+            smartspim_config=smartspim_config,
+            cell_proposals=cell_proposals,
+        )
 
-    smartspim_config["name"] = smartspim_dataset_name
-
-    print("Final cell classification config: ", smartspim_config)
-
-    # Remove comment when new detection is deployed
-    # cell_proposals = np.load(f"{data_folder}/spots.npy")
-    cell_proposals = parse_cell_xml(
-        f"{data_folder}/{proposal_folder}/detected_cells.xml"
-    )
-
-    # Copying detection files
-    copy_detection_files(
-        data_folder=data_folder,
-        results_folder=results_folder,
-        proposal_folder=proposal_folder,
-    )
-
-    # Downsample cells to the prediction scale
-    cell_proposals = downsample_cell_locations(
-        coordinates=cell_proposals,
-        downscale_factors=[int(smartspim_config["downsample"])] * 3,
-    )
-
-    print("Spots proposals: ", cell_proposals.shape)
-    print("Cellfinder params: ", smartspim_config["cellfinder_params"])
-
-    classification.main(
-        smartspim_config=smartspim_config,
-        cell_proposals=cell_proposals,
-    )
+    else:
+        print(f"No segmentation channel, pipeline config: {pipeline_config}")
+        utils.save_dict_as_json(
+            filename=f"{results_folder}/segmentation_processing_manifest_no_class.json",
+            dictionary=pipeline_config,
+        )
 
 
 if __name__ == "__main__":
