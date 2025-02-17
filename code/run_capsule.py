@@ -16,6 +16,7 @@ import torch
 from aind_smartspim_classification import classification
 from aind_smartspim_classification.params import get_yaml
 from aind_smartspim_classification.utils import utils
+import pandas as pd
 
 
 def parse_cell_xml(xml_path: str) -> np.array:
@@ -46,6 +47,31 @@ def parse_cell_xml(xml_path: str) -> np.array:
 
     return np.array(marker_data, dtype=np.uint32)
 
+def parse_cell_csv(csv_path: str):
+    """
+    Reads a CSV with ZYX coordinates of
+    possible cells on it.
+
+    Parameters
+    ----------
+    csv_path: str
+        Path where the CSV is located.
+
+    Returns
+    -------
+    np.array
+        Numpy array with the proposals in
+        ZYX order.
+    """
+    df = pd.read_csv(
+        csv_path,
+        usecols=['x', 'y', 'z']
+    )
+    zyx_array = df[
+        ['z', 'y', 'x']
+    ].to_numpy(dtype=np.uint32)
+
+    return zyx_array
 
 def get_data_config(
     data_folder: str,
@@ -355,11 +381,6 @@ def run():
         # want to shutil segmentation data to results folder if detection was run
         default_config["metadata_path"] = f"{results_folder}/{proposal_folder}/metadata"
 
-        # If this path exists, it's postprocessing pipeline
-        # postprocess_path = data_folder.joinpath('postprocess/image_cell_segmentation')
-        # if postprocess_path.exists():
-        #     proposal_folder = f"postprocess/image_cell_segmentation/{proposal_folder}"
-
         if "classify" in mode:
             get_detection_data(
                 results_folder=results_folder,
@@ -386,9 +407,27 @@ def run():
 
         # Remove comment when new detection is deployed
         # cell_proposals = np.load(f"{data_folder}/spots.npy")
-        cell_proposals = parse_cell_xml(
-            f"{data_folder}/{proposal_folder}/detected_cells.xml"
-        )
+        proposals_path_xml = f"{data_folder}/{proposal_folder}/detected_cells.xml"
+        proposals_path_csv = f"{data_folder}/{proposal_folder}/cell_likelihoods.csv"
+
+        cell_proposals = np.empty(0, dtype=np.uint32)
+
+        if os.path.exists(proposals_path_xml):
+            print(f"Reading proposals from {proposals_path_xml}")
+            cell_proposals = parse_cell_xml(
+                proposals_path_xml
+            )
+        
+        elif os.path.exists(proposals_path_csv):
+            print(f"Reading proposals from {proposals_path_csv}")
+            cell_proposals = parse_cell_csv(proposals_path_csv)
+        
+        else:
+            msg = (
+                "Cell proposals are not in"
+                f"{proposals_path_xml} nor {proposals_path_csv}"
+            )
+            raise FileNotFoundError(msg)
 
         # Copying detection files
         copy_detection_files(
