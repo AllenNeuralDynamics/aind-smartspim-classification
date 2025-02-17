@@ -49,7 +49,7 @@ def parse_cell_xml(xml_path: str) -> np.array:
 
 def get_data_config(
     data_folder: str,
-    processing_manifest_path: str = "segmentation_processing_manifest*",
+    processing_manifest_path: str = "classification_processing_manifest*",
     data_description_path: str = "data_description.json",
 ) -> Tuple:
     """
@@ -300,12 +300,12 @@ def run():
         data_folder=data_folder,
     )
 
-    segmentation_info = pipeline_config.get("segmentation")
+    classification_info = pipeline_config.get("segmentation")
 
-    if segmentation_info is None:
+    if classification_info is None:
         raise ValueError("Please, provide segmentation channels.")
 
-    channel_to_process = segmentation_info.get("channel")
+    channel_to_process = classification_info.get("channel")
 
     # Note: The dispatcher capsule creates a single config with
     # the channels. If the channel key does not exist, it means
@@ -354,6 +354,11 @@ def run():
 
         # want to shutil segmentation data to results folder if detection was run
         default_config["metadata_path"] = f"{results_folder}/{proposal_folder}/metadata"
+
+        # If this path exists, it's postprocessing pipeline
+        # postprocess_path = data_folder.joinpath('postprocess/image_cell_segmentation')
+        # if postprocess_path.exists():
+        #     proposal_folder = f"postprocess/image_cell_segmentation/{proposal_folder}"
 
         if "classify" in mode:
             get_detection_data(
@@ -409,7 +414,7 @@ def run():
     else:
         print(f"No segmentation channel, pipeline config: {pipeline_config}")
         utils.save_dict_as_json(
-            filename=f"{results_folder}/segmentation_processing_manifest_no_class.json",
+            filename=f"{results_folder}/classification_processing_manifest_no_class.json",
             dictionary=pipeline_config,
         )
 
