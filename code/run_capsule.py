@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
+import pandas as pd
 import torch
+
 from aind_smartspim_classification import classification
 from aind_smartspim_classification.params import get_yaml
 from aind_smartspim_classification.utils import utils
-import pandas as pd
 
 
 def parse_cell_xml(xml_path: str) -> np.array:
@@ -47,6 +48,7 @@ def parse_cell_xml(xml_path: str) -> np.array:
 
     return np.array(marker_data, dtype=np.uint32)
 
+
 def parse_cell_csv(csv_path: str):
     """
     Reads a CSV with ZYX coordinates of
@@ -63,15 +65,11 @@ def parse_cell_csv(csv_path: str):
         Numpy array with the proposals in
         ZYX order.
     """
-    df = pd.read_csv(
-        csv_path,
-        usecols=['x', 'y', 'z']
-    )
-    zyx_array = df[
-        ['z', 'y', 'x']
-    ].to_numpy(dtype=np.uint32)
+    df = pd.read_csv(csv_path, usecols=["x", "y", "z"])
+    zyx_array = df[["z", "y", "x"]].to_numpy(dtype=np.uint32)
 
     return zyx_array
+
 
 def get_data_config(
     data_folder: str,
@@ -309,11 +307,14 @@ def run():
     # Absolute paths of common Code Ocean folders
     data_folder = os.path.abspath("../data")
     results_folder = os.path.abspath("../results")
+    smartspim_detection_models = Path(results_folder).joinpath(
+        "smartspim_detection_models"
+    )
     # scratch_folder = os.path.abspath("../scratch")
 
     # It is assumed that these files
     # will be in the data folder
-    required_input_elements = []
+    required_input_elements = [str(smartspim_detection_models)]
 
     missing_files = validate_capsule_inputs(required_input_elements)
 
@@ -345,30 +346,22 @@ def run():
         mode = str(sys.argv[1:])
         mode = mode.replace("[", "").replace("]", "").casefold()
 
-        print(f"Classification mode: {mode}")
+        # Getting inference model
+        model_config_path = smartspim_detection_models.joinpath("config.json")
 
-        if "nuclei" in mode:
-            default_config = get_yaml(
-                os.path.abspath(
-                    "aind_smartspim_classification/params/default_classify_config.yml"
-                )
+        if not model_config_path.exists():
+            msg = (
+                f"Please, provide a config {model_config_path} "
+                "in the detection models folder."
             )
-            default_config["cellfinder_params"][
-                "trained_model"
-            ] = f"{data_folder}/smartspim_18_model/smartspim_18_model.h5"
+            raise FileNotFoundError(msg)
 
-        elif "cytosolic":
-            default_config = get_yaml(
-                os.path.abspath(
-                    "aind_smartspim_classification/params/cytosolic_classify_config.yml"
-                )
-            )
+        model_config = utils.read_json_as_dict(str(model_config_path))
 
-            default_config["cellfinder_params"][
-                "trained_model"
-            ] = f"{data_folder}/cytosolic_model/2024_10_09_smartspim_18_cytosolic.h5"
-        else:
-            raise NotImplementedError(f"The mode {mode} has not been implemented")
+        # Setting up configuration for inference
+        default_config = dict()
+
+        default_config["model_config"] = model_config
 
         # add paths to default_config
         default_config["input_data"] = os.path.abspath(
@@ -380,19 +373,6 @@ def run():
 
         # want to shutil segmentation data to results folder if detection was run
         default_config["metadata_path"] = f"{results_folder}/{proposal_folder}/metadata"
-
-        if "classify" in mode:
-            get_detection_data(
-                results_folder=results_folder,
-                dataset=smartspim_dataset_name,
-                channel=pipeline_config["segmentation"]["channel"],
-            )
-
-        if "detect" in mode:
-            shutil.copytree(
-                f"{data_folder}/{proposal_folder}/",
-                f"{results_folder}/{proposal_folder}/",
-            )
 
         print("Initial cell classification config: ", default_config)
 
@@ -414,14 +394,12 @@ def run():
 
         if os.path.exists(proposals_path_xml):
             print(f"Reading proposals from {proposals_path_xml}")
-            cell_proposals = parse_cell_xml(
-                proposals_path_xml
-            )
-        
+            cell_proposals = parse_cell_xml(proposals_path_xml)
+
         elif os.path.exists(proposals_path_csv):
             print(f"Reading proposals from {proposals_path_csv}")
             cell_proposals = parse_cell_csv(proposals_path_csv)
-        
+
         else:
             msg = (
                 "Cell proposals are not in"

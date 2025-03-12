@@ -278,14 +278,18 @@ def cell_classification(
         f"Running cell classification in chunked data. Prediction chunksize: {prediction_chunksize} - Overlap chunksize: {overlap_prediction_chunksize}"
     )
 
-    cube_width = smartspim_config["cellfinder_params"]["cube_width"]
-    cube_height = smartspim_config["cellfinder_params"]["cube_height"]
-    cube_depth = smartspim_config["cellfinder_params"]["cube_depth"]
+    model_config = smartspim_config.get("model_config")
+
+    if model_config is None:
+        raise ValueError(f"Please, provide a model configuration: {smartspim_config}")
+
+    cube_width = model_config["parameters"]["cube_width"]
+    cube_height = model_config["parameters"]["cube_height"]
+    cube_depth = model_config["parameters"]["cube_depth"]
+    model_path = model_config["default_model"]
 
     # Load model defaults to inference mode
-    model = keras.models.load_model(
-        smartspim_config["cellfinder_params"]["trained_model"]
-    )
+    model = keras.models.load_model(model_path)
     model.trainable = False
     ORIG_AXIS_ORDER = ["Z", "Y", "X"]
 
@@ -727,6 +731,7 @@ def generate_neuroglancer_link(
 def main(
     smartspim_config: dict,
     cell_proposals: np.array,
+    ng_voxel_sizes: List[float] = [2.0, 1.8, 1.8],
 ):
     """
     This function detects cells
@@ -741,6 +746,9 @@ def main(
     cell_proposals: np.array
         Cell proposals from the previous step.
 
+    ng_voxel_sizes: List[float]
+        Default voxel sizes for SmartSPIM.
+        Default: [2.0, 1.8, 1.8]
     """
 
     utils.create_folder(smartspim_config["metadata_path"])
@@ -793,7 +801,7 @@ def main(
         smartspim_config["channel"],
         classified_cells_path,
         smartspim_config["save_path"],
-        smartspim_config["ng_voxel_sizes"],
+        ng_voxel_sizes,
         logger,
     )
 
