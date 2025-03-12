@@ -307,14 +307,14 @@ def run():
     # Absolute paths of common Code Ocean folders
     data_folder = os.path.abspath("../data")
     results_folder = os.path.abspath("../results")
-    smartspim_detection_models = Path(results_folder).joinpath(
-        "smartspim_detection_models"
+    smartspim_production_models = Path(results_folder).joinpath(
+        "smartspim_production_models"
     )
     # scratch_folder = os.path.abspath("../scratch")
 
     # It is assumed that these files
     # will be in the data folder
-    required_input_elements = [str(smartspim_detection_models)]
+    required_input_elements = [str(smartspim_production_models)]
 
     missing_files = validate_capsule_inputs(required_input_elements)
 
@@ -347,7 +347,7 @@ def run():
         mode = mode.replace("[", "").replace("]", "").casefold()
 
         # Getting inference model
-        model_config_path = smartspim_detection_models.joinpath("config.json")
+        model_config_path = smartspim_production_models.joinpath("config.json")
 
         if not model_config_path.exists():
             msg = (
