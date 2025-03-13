@@ -207,12 +207,11 @@ def cell_classification(
     )
 
     mask_path = Path(smartspim_config["input_data"]).joinpath(
-        f"{smartspim_config['input_channel']}/{smartspim_config['mask_scale']}"
+        f"{smartspim_config['input_channel']}/{smartspim_config['model_config']['parameters']['mask_scale']}"
     )
+    downsample = smartspim_config["model_config"]["parameters"]["downsample"]
 
-    print(
-        f" Image Path: {image_path} -- mask path: {mask_path} - scale: {smartspim_config['downsample']}"
-    )
+    print(f" Image Path: {image_path} -- mask path: {mask_path} - scale: {downsample}")
 
     device = None
 
@@ -229,8 +228,8 @@ def cell_classification(
         lazy_data = concatenate_lazy_data(
             dataset_paths=[image_path, background_path],
             multiscales=[
-                smartspim_config["downsample"],
-                smartspim_config["downsample"],
+                downsample,
+                downsample,
             ],
             concat_axis=-4,
         )
@@ -248,7 +247,7 @@ def cell_classification(
             .create(
                 data_path=str(image_path),
                 parse_path=False,
-                multiscale=smartspim_config["downsample"],
+                multiscale=downsample,
             )
             .as_dask_array()
         )
@@ -438,7 +437,7 @@ def cell_classification(
                 cell_type = predictions[idx]
 
                 cell_z, cell_y, cell_x = upsample_position(
-                    proposal[:3], downsample_factor=smartspim_config["downsample"]
+                    proposal[:3], downsample_factor=downsample
                 )
 
                 cell_likelihood.append(
@@ -499,7 +498,7 @@ def cell_classification(
             cell_type = predictions[idx] + 1
 
             cell_z, cell_y, cell_x = upsample_position(
-                proposal[:3], downsample_factor=smartspim_config["downsample"]
+                proposal[:3], downsample_factor=downsample
             )
 
             cell_likelihood.append(

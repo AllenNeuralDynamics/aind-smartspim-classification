@@ -307,9 +307,10 @@ def run():
     # Absolute paths of common Code Ocean folders
     data_folder = os.path.abspath("../data")
     results_folder = os.path.abspath("../results")
-    smartspim_production_models = Path(results_folder).joinpath(
+    smartspim_production_models = Path(data_folder).joinpath(
         "smartspim_production_models"
     )
+
     # scratch_folder = os.path.abspath("../scratch")
 
     # It is assumed that these files
@@ -357,11 +358,15 @@ def run():
             raise FileNotFoundError(msg)
 
         model_config = utils.read_json_as_dict(str(model_config_path))
+        model_config["default_model"] = smartspim_production_models.joinpath(
+            model_config["default_model"]
+        )
 
         # Setting up configuration for inference
         default_config = dict()
 
         default_config["model_config"] = model_config
+        print("Model config: ", default_config)
 
         # add paths to default_config
         default_config["input_data"] = os.path.abspath(
@@ -387,6 +392,7 @@ def run():
 
         # Remove comment when new detection is deployed
         # cell_proposals = np.load(f"{data_folder}/spots.npy")
+
         proposals_path_xml = f"{data_folder}/{proposal_folder}/detected_cells.xml"
         proposals_path_csv = f"{data_folder}/{proposal_folder}/cell_likelihoods.csv"
 
@@ -417,11 +423,14 @@ def run():
         # Downsample cells to the prediction scale
         cell_proposals = downsample_cell_locations(
             coordinates=cell_proposals,
-            downscale_factors=[int(smartspim_config["downsample"])] * 3,
+            downscale_factors=[
+                int(smartspim_config["model_config"]["parameters"]["downsample"])
+            ]
+            * 3,
         )
 
-        print("Spots proposals: ", cell_proposals.shape)
-        print("Cellfinder params: ", smartspim_config["cellfinder_params"])
+        print("Cell proposals: ", cell_proposals.shape)
+        print("Model params: ", smartspim_config["model_config"])
 
         classification.main(
             smartspim_config=smartspim_config,

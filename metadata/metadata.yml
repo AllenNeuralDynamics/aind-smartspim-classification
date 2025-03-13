@@ -1,5 +1,5 @@
 metadata_version: 1
-name: aind-smartspim-classification-0.0.4
+name: aind-smartspim-classification-0.0.5
 description: Large-scale image cell classification using a finetuned cellfinder model.
 tags:
 - SmartSPIM
