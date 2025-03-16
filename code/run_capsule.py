@@ -73,7 +73,7 @@ def parse_cell_csv(csv_path: str):
 
 def get_data_config(
     data_folder: str,
-    processing_manifest_path: str = "classification_processing_manifest*",
+    processing_manifest_path: str = "*processing_manifest*.json",
     data_description_path: str = "data_description.json",
 ) -> Tuple:
     """
