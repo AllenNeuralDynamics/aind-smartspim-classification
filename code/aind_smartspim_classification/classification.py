@@ -495,7 +495,7 @@ def cell_classification(
 
         cell_likelihood = []
         for idx, proposal in enumerate(picked_proposals):
-            cell_type = predictions[idx] + 1
+            cell_type = predictions[idx]
 
             cell_z, cell_y, cell_x = upsample_position(
                 proposal[:3], downsample_factor=downsample
