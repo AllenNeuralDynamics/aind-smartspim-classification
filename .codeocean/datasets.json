@@ -1,0 +1,9 @@
+{
+	"version": 1,
+	"attached_datasets": [
+		{
+			"id": "5b27ac5e-d18a-44bd-a219-2d237e99d7a5",
+			"mount": "smartspim_production_models"
+		}
+	]
+}

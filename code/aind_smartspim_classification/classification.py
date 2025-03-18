@@ -207,12 +207,11 @@ def cell_classification(
     )
 
     mask_path = Path(smartspim_config["input_data"]).joinpath(
-        f"{smartspim_config['input_channel']}/{smartspim_config['mask_scale']}"
+        f"{smartspim_config['input_channel']}/{smartspim_config['model_config']['parameters']['mask_scale']}"
     )
+    downsample = smartspim_config["model_config"]["parameters"]["downsample"]
 
-    print(
-        f" Image Path: {image_path} -- mask path: {mask_path} - scale: {smartspim_config['downsample']}"
-    )
+    print(f" Image Path: {image_path} -- mask path: {mask_path} - scale: {downsample}")
 
     device = None
 
@@ -229,8 +228,8 @@ def cell_classification(
         lazy_data = concatenate_lazy_data(
             dataset_paths=[image_path, background_path],
             multiscales=[
-                smartspim_config["downsample"],
-                smartspim_config["downsample"],
+                downsample,
+                downsample,
             ],
             concat_axis=-4,
         )
@@ -248,7 +247,7 @@ def cell_classification(
             .create(
                 data_path=str(image_path),
                 parse_path=False,
-                multiscale=smartspim_config["downsample"],
+                multiscale=downsample,
             )
             .as_dask_array()
         )
@@ -278,14 +277,18 @@ def cell_classification(
         f"Running cell classification in chunked data. Prediction chunksize: {prediction_chunksize} - Overlap chunksize: {overlap_prediction_chunksize}"
     )
 
-    cube_width = smartspim_config["cellfinder_params"]["cube_width"]
-    cube_height = smartspim_config["cellfinder_params"]["cube_height"]
-    cube_depth = smartspim_config["cellfinder_params"]["cube_depth"]
+    model_config = smartspim_config.get("model_config")
+
+    if model_config is None:
+        raise ValueError(f"Please, provide a model configuration: {smartspim_config}")
+
+    cube_width = model_config["parameters"]["cube_width"]
+    cube_height = model_config["parameters"]["cube_height"]
+    cube_depth = model_config["parameters"]["cube_depth"]
+    model_path = model_config["default_model"]
 
     # Load model defaults to inference mode
-    model = keras.models.load_model(
-        smartspim_config["cellfinder_params"]["trained_model"]
-    )
+    model = keras.models.load_model(model_path)
     model.trainable = False
     ORIG_AXIS_ORDER = ["Z", "Y", "X"]
 
@@ -434,7 +437,7 @@ def cell_classification(
                 cell_type = predictions[idx]
 
                 cell_z, cell_y, cell_x = upsample_position(
-                    proposal[:3], downsample_factor=smartspim_config["downsample"]
+                    proposal[:3], downsample_factor=downsample
                 )
 
                 cell_likelihood.append(
@@ -492,10 +495,10 @@ def cell_classification(
 
         cell_likelihood = []
         for idx, proposal in enumerate(picked_proposals):
-            cell_type = predictions[idx] + 1
+            cell_type = predictions[idx]
 
             cell_z, cell_y, cell_x = upsample_position(
-                proposal[:3], downsample_factor=smartspim_config["downsample"]
+                proposal[:3], downsample_factor=downsample
             )
 
             cell_likelihood.append(
@@ -727,6 +730,7 @@ def generate_neuroglancer_link(
 def main(
     smartspim_config: dict,
     cell_proposals: np.array,
+    ng_voxel_sizes: List[float] = [2.0, 1.8, 1.8],
 ):
     """
     This function detects cells
@@ -741,6 +745,9 @@ def main(
     cell_proposals: np.array
         Cell proposals from the previous step.
 
+    ng_voxel_sizes: List[float]
+        Default voxel sizes for SmartSPIM.
+        Default: [2.0, 1.8, 1.8]
     """
 
     utils.create_folder(smartspim_config["metadata_path"])
@@ -793,7 +800,7 @@ def main(
         smartspim_config["channel"],
         classified_cells_path,
         smartspim_config["save_path"],
-        smartspim_config["ng_voxel_sizes"],
+        ng_voxel_sizes,
         logger,
     )
 
