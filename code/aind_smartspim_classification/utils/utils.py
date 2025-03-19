@@ -7,18 +7,22 @@ Created on Mon Nov 28 12:23:13 2022
 @Modified by: camilo.laiton
 """
 
+import inspect
 import json
 import logging
 import multiprocessing
 import os
+import struct
 import platform
 import subprocess
 import time
+from multiprocessing.managers import BaseManager, NamespaceProxy
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
 import dask
+import dask.array as da
 import matplotlib.pyplot as plt
 import numpy as np
 import psutil
@@ -241,6 +245,234 @@ def create_folder(dest_dir: PathLike, verbose: Optional[bool] = False) -> None:
             if e.errno != os.errno.EEXIST:
                 raise
 
+def volume_orientation(acquisition_params: dict):
+    """
+    Uses the acquisition orientation to set the cross-section
+    orientation in the neuroglancer links
+
+    Parameters
+    ----------
+    acquisition_params : dict
+        acquisition paramenters from the processing manifest
+
+    Raises
+    ------
+    ValueError
+        if a brain is aquired in a way other than those predifined here
+
+    Returns
+    -------
+    orientation : list
+        orientation values for the neuroglancer link
+
+    """
+
+    acquired = ["", "", ""]
+
+    for axis in acquisition_params["axes"]:
+        acquired[axis["dimension"]] = axis["direction"][0]
+
+    acquired = "".join(acquired)
+
+    if acquired in ["SPR", "SPL"]:
+        orientation = [0.5, 0.5, 0.5, -0.5]
+    elif acquired == "SAL":
+        orientation = [0.5, 0.5, -0.5, 0.5]
+    elif acquired == "IAR":
+        orientation = [0.5, -0.5, 0.5, 0.5]
+    elif acquired == "RAS":
+        orientation = [np.cos(np.pi / 4), 0.0, 0.0, np.cos(np.pi / 4)]
+    elif acquired == "RPI":
+        orientation = [np.cos(np.pi / 4), 0.0, 0.0, -np.cos(np.pi / 4)]
+    elif acquired == "LAI":
+        orientation = [0.0, np.cos(np.pi / 4), -np.cos(np.pi / 4), 0.0]
+    else:
+        raise ValueError(
+            "Acquisition orientation: {acquired} has unknown NG parameters"
+        )
+
+    return orientation
+
+def calculate_dynamic_range(image_path: PathLike, percentile: 99, level: 3):
+    """
+    Calculates the default dynamic range for teh neuroglancer link
+    using a defined percentile from the downsampled zarr
+
+    Parameters
+    ----------
+    image_path : PathLike
+        location of the zarr used for classification
+    percentile : 99
+        The top percentile value for setting the dynamic range
+    level : 3
+        level of zarr to use for calculating percentile
+
+    Returns
+    -------
+    dynamic_ranges : list
+        The dynamic range and window range values for zarr
+
+    """
+
+    img = da.from_zarr(image_path, str(level)).squeeze()
+    range_max = da.percentile(img.flatten(), percentile).compute()[0]
+    window_max = int(range_max * 1.5)
+    dynamic_ranges = [int(range_max), window_max]
+
+    return dynamic_ranges
+
+class ObjProxy(NamespaceProxy):
+    """Returns a proxy instance for any user defined data-type. The proxy instance will have the namespace and
+    functions of the data-type (except private/protected callables/attributes). Furthermore, the proxy will be
+    pickable and can its state can be shared among different processes."""
+
+    @classmethod
+    def populate_obj_attributes(cls, real_cls):
+        """
+        Populates attributes of the proxy object
+        """
+        DISALLOWED = set(dir(cls))
+        ALLOWED = [
+            "__sizeof__",
+            "__eq__",
+            "__ne__",
+            "__le__",
+            "__repr__",
+            "__dict__",
+            "__lt__",
+            "__gt__",
+        ]
+        DISALLOWED.add("__class__")
+        new_dict = {}
+        for attr, value in inspect.getmembers(real_cls, callable):
+            if attr not in DISALLOWED or attr in ALLOWED:
+                new_dict[attr] = cls._proxy_wrap(attr)
+        return new_dict
+
+    @staticmethod
+    def _proxy_wrap(attr):
+        """
+        This method creates function that calls the proxified object's method.
+        """
+
+        def f(self, *args, **kwargs):
+            """
+            Function that calls the proxified object's method.
+            """
+            return self._callmethod(attr, args, kwargs)
+
+        return f
+
+
+def buf_builder(x, y, z, buf_):
+    """builds the buffer"""
+    pt_buf = struct.pack("<3f", x, y, z)
+    buf_.extend(pt_buf)
+
+
+attributes = ObjProxy.populate_obj_attributes(bytearray)
+bytearrayProxy = type("bytearrayProxy", (ObjProxy,), attributes)
+
+
+def generate_precomputed_cells(cells, precompute_path, configs):
+    """
+    Function for saving precomputed annotation layer
+
+    Parameters
+    -----------------
+
+    cells: dict
+        output of the xmltodict function for importing cell locations
+    precomputed_path: str
+        path to where you want to save the precomputed files
+    comfigs: dict
+        data on the space that the data will be viewed
+
+    """
+
+    BaseManager.register(
+        "bytearray",
+        bytearray,
+        bytearrayProxy,
+        exposed=tuple(dir(bytearrayProxy)),
+    )
+    manager = BaseManager()
+    manager.start()
+
+    buf = manager.bytearray()
+
+    cell_list = []
+    for idx, cell in cells.iterrows():
+        cell_list.append([int(cell["z"]), int(cell["y"]), int(cell["x"])])
+
+    l_bounds = np.min(cell_list, axis=0)
+    u_bounds = np.max(cell_list, axis=0)
+
+    output_path = os.path.join(precompute_path, "spatial0")
+    create_folder(output_path)
+
+    metadata = {
+        "@type": "neuroglancer_annotations_v1",
+        "dimensions": configs['dimenstions'],
+        "lower_bound": [float(x) for x in l_bounds],
+        "upper_bound": [float(x) for x in u_bounds],
+        "annotation_type": "point",
+        "properties": [],
+        "relationships": [],
+        "by_id": {"key": "by_id",},
+        "spatial": [
+            {
+                "key": "spatial0",
+                "grid_shape": [1] * configs['rank'],
+                "chunk_size": [max(1, float(x)) for x in u_bounds - l_bounds],
+                "limit": len(cell_list),
+            },
+        ],
+    }
+
+    with open(os.path.join(precompute_path, "info"), "w") as f:
+        f.write(json.dumps(metadata))
+
+    with open(os.path.join(output_path, "0_0_0"), "wb") as outfile:
+        start_t = time.time()
+
+        total_count = len(cell_list)  # coordinates is a list of tuples (x,y,z)
+
+        print("Running multiprocessing")
+
+        if not isinstance(buf, type(None)):
+            buf.extend(struct.pack("<Q", total_count))
+
+            with multiprocessing.Pool(processes=os.cpu_count()) as p:
+                p.starmap(
+                    buf_builder, [(x, y, z, buf) for (x, y, z) in cell_list]
+                )
+
+            # write the ids at the end of the buffer as increasing integers
+            id_buf = struct.pack(
+                "<%sQ" % len(cell_list), *range(len(cell_list))
+            )
+            buf.extend(id_buf)
+        else:
+            buf = struct.pack("<Q", total_count)
+
+            for x, y, z in cell_list:
+                pt_buf = struct.pack("<3f", x, y, z)
+                buf += pt_buf
+
+            # write the ids at the end of the buffer as increasing integers
+            id_buf = struct.pack(
+                "<%sQ" % len(cell_list), *range(len(cell_list))
+            )
+            buf += id_buf
+
+        print(
+            "Building file took {0} minutes".format(
+                (time.time() - start_t) / 60
+            )
+        )
+
+        outfile.write(bytes(buf))
 
 def generate_processing(
     data_processes: List[DataProcess],

@@ -428,12 +428,28 @@ def run():
             ]
             * 3,
         )
+        
+        neuroglancer_config = {
+            "base_url": "https://neuroglancer-demo.appspot.com/#!",
+            "crossSectionScale": 15,
+            "projectionScale": 16384,
+            "orientation": pipeline_config["prelim_acquisition"],
+            "dimensions" : {
+                "z": [2.0 * 10**-6, 'm' ],
+                "y": [1.8 * 10**-6, 'm' ],
+                "x": [1.8 * 10**-6, 'm' ],
+                "t": [0.001, 's'],
+            },
+            "rank": 3,
+            "gpuMemoryLimit": 1500000000,
+        }
 
         print("Cell proposals: ", cell_proposals.shape)
         print("Model params: ", smartspim_config["model_config"])
 
         classification.main(
             smartspim_config=smartspim_config,
+            neuroglancer_config = neuroglancer_config,
             cell_proposals=cell_proposals,
         )
 

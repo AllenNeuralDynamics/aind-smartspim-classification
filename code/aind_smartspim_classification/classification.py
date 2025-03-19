@@ -593,7 +593,7 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     output_csv = os.path.join(save_path, "detected_cells.csv")
     df_cells.to_csv(output_csv)
 
-    return output_csv
+    return output_csv, df_cells
 
 
 def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
@@ -622,6 +622,82 @@ def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
     df_out = pd.DataFrame(likelihood_metrics, index=["Metrics"])
     df_out.to_csv(os.path.join(save_path, "cell_likelihood_metrics.csv"))
 
+def generate_ng_link(
+    ng_configs: dict,
+    smartspim_config: dict,
+    dynamic_range: list,
+    logger: logging.Logger,
+    bucket = 'aind-open-bucket'
+):
+    """
+    Creates the json state dictionary for the neuroglancer link
+
+    Parameters
+    ----------
+    mg_configs : dict
+        Parameters for creating neuroglancer link defined in run_capsule.py
+    smartspim_config : dict
+        Dataset specific parameters from processing_manifest
+    dynamic_range : list
+        The intensity range calculated from the zarr
+    logger: logging.Logger,
+        
+
+
+    Returns
+    -------
+    json_state : dict
+        fully configured JSON for neuroglancer visualization
+    """
+    json_name = os.path.join(smartspim_config['save_path'], "visualization/neuroglancer_config.json")
+    
+    
+    
+    ng_path = f"s3://{bucket}{smartspim_config['name']}/{json_name}"
+    
+    if isinstance(ng_configs['orientation'], dict):
+        crossSectionOrientation = utils.volume_orientation(ng_configs['orientation'])
+    else:
+        crossSectionOrientation = [np.cos(np.pi / 4), 0.0, 0.0, np.cos(np.pi / 4)]
+
+    json_state = {
+        "ng_link": f"{ng_configs['base_url']}{ng_path}",
+        "title": smartspim_config['channel'],
+        "dimensions": ng_configs["dimensions"],
+        "crossSectionOrientation": crossSectionOrientation,
+        "crossSectionScale": ng_configs["crossSectionScale"],
+        "projectionScale": ng_configs['projectionScale'],
+        "layers": [
+            {
+                "source": f"zarr://s3://{bucket}/{smartspim_config['name']}/image_tile_fusing/OMEZarr/{smartspim_config['channel']}.zarr",
+                "type": "image",
+                "shader": {'#uicontrol vec3 color color(default="#ffffff")\n#uicontrol invlerp normalized\nvoid main() {\nemitRGB(color * normalized());\n}'},
+                "shaderControls": {
+                    "normalized": {
+                        "range": [0, dynamic_range[0]], 
+                        "window": [0, dynamic_range[1]],
+                    },
+                },
+                "name": f"Channel: {smartspim_config['channel']}"
+            },
+            {
+                "source": f"precomputed://s3://{bucket}/{smartspim_config['name']}/image_cell_segmentation/{smartspim_config['channel']}/visualization/detected_precomputed",
+                "type": "annotation",
+                "tool": "annotatePoint",
+                "crossSectionAnnotationSpacing": 1.0,
+                "name": "Classified Cells" 
+            },
+        ],
+        "gpuMemoryLimit": ng_configs['gpuMemoryLimit'],
+        "selectedLayer": {"visible": True, "layer": f"Channel: {smartspim_config['channel']}"},
+        "layout": "4panel",
+    }
+    
+    logger.info(f"Visualization link: {json_state['ng_link']}")
+    output_path = os.path.join(smartspim_config['save_path'], json_name)
+
+    with open(output_path, "w") as outfile:
+        json.dump(json_state, outfile, indent=2)
 
 def generate_neuroglancer_link(
     image_path: str,
@@ -729,6 +805,7 @@ def generate_neuroglancer_link(
 
 def main(
     smartspim_config: dict,
+    neuroglancer_config: dict,
     cell_proposals: np.array,
     ng_voxel_sizes: List[float] = [2.0, 1.8, 1.8],
 ):
@@ -782,7 +859,7 @@ def main(
 
     # merge block .xmls and .csvs into single file
     # merge_xml(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
-    classified_cells_path = merge_csv(
+    classified_cells_path, cells_df = merge_csv(
         smartspim_config["metadata_path"], smartspim_config["save_path"], logger
     )
 
@@ -792,17 +869,32 @@ def main(
     image_path = os.path.abspath(
         f"{smartspim_config['input_data']}/{smartspim_config['input_channel']}"
     )
+    
+    utils.generate_precomputed_cells(
+        cells_df, 
+        precompute_path = str(smartspim_config["metadata_path"]), 
+        configs = neuroglancer_config
+    )
+    
+    dynamic_range = utils.calculate_dynamic_range(image_path, 99, 3)
+    
+    generate_ng_link(
+        neuroglancer_config,
+        smartspim_config,
+        dynamic_range,
+        logger
+    )
 
     # create neuroglancer link
-    generate_neuroglancer_link(
-        image_path,
-        smartspim_config["name"],
-        smartspim_config["channel"],
-        classified_cells_path,
-        smartspim_config["save_path"],
-        ng_voxel_sizes,
-        logger,
-    )
+    #generate_neuroglancer_link(
+    #    image_path,
+    #    smartspim_config["name"],
+    #    smartspim_config["channel"],
+    #    classified_cells_path,
+    #    smartspim_config["save_path"],
+    #    ng_voxel_sizes,
+    #    logger,
+    #)
 
     utils.generate_processing(
         data_processes=data_processes,
