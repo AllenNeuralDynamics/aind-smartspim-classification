@@ -662,7 +662,7 @@ def generate_neuroglancer_link(
         configs = ng_configs
     )
     
-    ng_path = f"s3://{bucket}{smartspim_config['name']}/image_cell_segmentation/{smartspim_config['channel']}/visualization/neuroglancer_config.json"
+    ng_path = f"s3://{bucket}/{smartspim_config['name']}/image_cell_segmentation/{smartspim_config['channel']}/visualization/neuroglancer_config.json"
     
     if isinstance(ng_configs['orientation'], dict):
         crossSectionOrientation = utils.volume_orientation(ng_configs['orientation'])
