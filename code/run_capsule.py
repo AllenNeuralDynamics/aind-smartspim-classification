@@ -315,7 +315,7 @@ def run():
 
     # It is assumed that these files
     # will be in the data folder
-    required_input_elements = [str(smartspim_production_models)]
+    required_input_elements = [] #[str(smartspim_production_models)]
 
     missing_files = validate_capsule_inputs(required_input_elements)
 
