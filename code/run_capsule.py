@@ -430,6 +430,8 @@ def run():
             * 3,
         )
         
+        print(f"Pipeline Config data: {pipeline_config}")
+
         neuroglancer_config = {
             "base_url": "https://neuroglancer-demo.appspot.com/#!",
             "crossSectionScale": 15,
