@@ -430,13 +430,13 @@ def run():
             * 3,
         )
         
-        print(f"Pipeline Config data: {pipeline_config}")
+        acquisition = utils.read_json_as_dict(f"{data_folder}/acquisition.json")
 
         neuroglancer_config = {
             "base_url": "https://neuroglancer-demo.appspot.com/#!",
             "crossSectionScale": 15,
             "projectionScale": 16384,
-            "orientation": pipeline_config["prelim_acquisition"],
+            "orientation": acquisition,
             "dimensions" : {
                 "z": [2.0 * 10**-6, 'm' ],
                 "y": [1.8 * 10**-6, 'm' ],
