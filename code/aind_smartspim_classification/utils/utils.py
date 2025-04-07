@@ -12,12 +12,12 @@ import json
 import logging
 import multiprocessing
 import os
-import struct
 import platform
+import struct
 import subprocess
 import time
-from multiprocessing.managers import BaseManager, NamespaceProxy
 from datetime import datetime
+from multiprocessing.managers import BaseManager, NamespaceProxy
 from pathlib import Path
 from typing import List, Optional
 
@@ -245,6 +245,7 @@ def create_folder(dest_dir: PathLike, verbose: Optional[bool] = False) -> None:
             if e.errno != os.errno.EEXIST:
                 raise
 
+
 def volume_orientation(acquisition_params: dict):
     """
     Uses the acquisition orientation to set the cross-section
@@ -293,6 +294,7 @@ def volume_orientation(acquisition_params: dict):
 
     return orientation
 
+
 def calculate_dynamic_range(image_path: PathLike, percentile: 99, level: 3):
     """
     Calculates the default dynamic range for teh neuroglancer link
@@ -320,6 +322,7 @@ def calculate_dynamic_range(image_path: PathLike, percentile: 99, level: 3):
     dynamic_ranges = [int(range_max), window_max]
 
     return dynamic_ranges
+
 
 class ObjProxy(NamespaceProxy):
     """Returns a proxy instance for any user defined data-type. The proxy instance will have the namespace and
@@ -413,17 +416,19 @@ def generate_precomputed_cells(cells, precompute_path, configs):
 
     metadata = {
         "@type": "neuroglancer_annotations_v1",
-        "dimensions": configs['dimensions'],
+        "dimensions": configs["dimensions"],
         "lower_bound": [float(x) for x in l_bounds],
         "upper_bound": [float(x) for x in u_bounds],
         "annotation_type": "point",
         "properties": [],
         "relationships": [],
-        "by_id": {"key": "by_id",},
+        "by_id": {
+            "key": "by_id",
+        },
         "spatial": [
             {
                 "key": "spatial0",
-                "grid_shape": [1] * configs['rank'],
+                "grid_shape": [1] * configs["rank"],
                 "chunk_size": [max(1, float(x)) for x in u_bounds - l_bounds],
                 "limit": len(cell_list),
             },
@@ -444,14 +449,10 @@ def generate_precomputed_cells(cells, precompute_path, configs):
             buf.extend(struct.pack("<Q", total_count))
 
             with multiprocessing.Pool(processes=os.cpu_count()) as p:
-                p.starmap(
-                    buf_builder, [(x, y, z, buf) for (x, y, z) in cell_list]
-                )
+                p.starmap(buf_builder, [(x, y, z, buf) for (x, y, z) in cell_list])
 
             # write the ids at the end of the buffer as increasing integers
-            id_buf = struct.pack(
-                "<%sQ" % len(cell_list), *range(len(cell_list))
-            )
+            id_buf = struct.pack("<%sQ" % len(cell_list), *range(len(cell_list)))
             buf.extend(id_buf)
         else:
             buf = struct.pack("<Q", total_count)
@@ -461,18 +462,13 @@ def generate_precomputed_cells(cells, precompute_path, configs):
                 buf += pt_buf
 
             # write the ids at the end of the buffer as increasing integers
-            id_buf = struct.pack(
-                "<%sQ" % len(cell_list), *range(len(cell_list))
-            )
+            id_buf = struct.pack("<%sQ" % len(cell_list), *range(len(cell_list)))
             buf += id_buf
 
-        print(
-            "Building file took {0} minutes".format(
-                (time.time() - start_t) / 60
-            )
-        )
+        print("Building file took {0} minutes".format((time.time() - start_t) / 60))
 
         outfile.write(bytes(buf))
+
 
 def generate_processing(
     data_processes: List[DataProcess],

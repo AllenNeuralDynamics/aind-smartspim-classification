@@ -14,7 +14,6 @@ from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import torch
-
 from aind_smartspim_classification import classification
 from aind_smartspim_classification.params import get_yaml
 from aind_smartspim_classification.utils import utils
@@ -150,12 +149,12 @@ def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict):
         Dictionary with the combined parameters
     """
 
-    default_config["input_channel"] = (
-        f"{pipeline_config['segmentation']['channel']}.zarr"
-    )
-    default_config["background_channel"] = (
-        f"{pipeline_config['segmentation']['background_channel']}.zarr"
-    )
+    default_config[
+        "input_channel"
+    ] = f"{pipeline_config['segmentation']['channel']}.zarr"
+    default_config[
+        "background_channel"
+    ] = f"{pipeline_config['segmentation']['background_channel']}.zarr"
     default_config["channel"] = pipeline_config["segmentation"]["channel"]
     default_config["input_scale"] = pipeline_config["segmentation"]["input_scale"]
     default_config["chunk_size"] = int(pipeline_config["segmentation"]["chunksize"])
@@ -339,7 +338,6 @@ def run():
     # the channels. If the channel key does not exist, it means
     # there are no segmentation channels splitted
     if channel_to_process is not None:
-
         # Folder where the detection files are stored from the previous step
         proposal_folder = f"cell_{channel_to_process}"
 
@@ -428,17 +426,17 @@ def run():
             ]
             * 3,
         )
-        
+
         neuroglancer_config = {
             "base_url": "https://neuroglancer-demo.appspot.com/#!",
             "crossSectionScale": 15,
             "projectionScale": 16384,
             "orientation": pipeline_config["prelim_acquisition"],
-            "dimensions" : {
-                "z": [2.0 * 10**-6, 'm' ],
-                "y": [1.8 * 10**-6, 'm' ],
-                "x": [1.8 * 10**-6, 'm' ],
-                "t": [0.001, 's'],
+            "dimensions": {
+                "z": [2.0 * 10**-6, "m"],
+                "y": [1.8 * 10**-6, "m"],
+                "x": [1.8 * 10**-6, "m"],
+                "t": [0.001, "s"],
             },
             "rank": 3,
             "gpuMemoryLimit": 1500000000,
@@ -449,7 +447,7 @@ def run():
 
         classification.main(
             smartspim_config=smartspim_config,
-            neuroglancer_config = neuroglancer_config,
+            neuroglancer_config=neuroglancer_config,
             cell_proposals=cell_proposals,
         )
 
