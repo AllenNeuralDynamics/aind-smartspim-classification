@@ -21,7 +21,6 @@ from aind_large_scale_prediction.generator.utils import (
     concatenate_lazy_data, recover_global_position, unpad_global_coords)
 from aind_large_scale_prediction.io import ImageReaderFactory
 from natsort import natsorted
-from ng_link import NgState
 
 from .__init__ import __maintainers__, __pipeline_version__, __version__
 from ._shared.types import PathLike
@@ -366,7 +365,6 @@ def cell_classification(
         )
 
         if proposals_in_block.shape[0]:
-
             logger.info(
                 f"{proposals_in_block.shape[0]} proposals found in {global_pos_name}!"
             )
@@ -593,7 +591,7 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     output_csv = os.path.join(save_path, "detected_cells.csv")
     df_cells.to_csv(output_csv)
 
-    return output_csv
+    return output_csv, df_cells
 
 
 def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
@@ -624,104 +622,95 @@ def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
 
 
 def generate_neuroglancer_link(
-    image_path: str,
-    dataset_name: str,
-    channel_name: str,
-    classified_cells_path: str,
-    output: str,
-    voxel_sizes: list,
+    cells_df: pd.DataFrame,
+    ng_configs: dict,
+    smartspim_config: dict,
+    dynamic_range: list,
     logger: logging.Logger,
+    bucket="aind-open-data",
 ):
     """
-    Generates neuroglancer link with the cell location
-    for a specific dataset
+    Creates the json state dictionary for the neuroglancer link
 
     Parameters
-    -----------
-    image_path: str
-        Path to the zarr file
+    ----------
+    cells_df: pd.DataFrame
+        the location of all the cells from proposal phase
+    ng_configs : dict
+        Parameters for creating neuroglancer link defined in run_capsule.py
+    smartspim_config : dict
+        Dataset specific parameters from processing_manifest
+    dynamic_range : list
+        The intensity range calculated from the zarr
+    logger: logging.Logger
+    bucket: str
+        Location on AWS where the data lives
 
-    dataset_name: str
-        Dataset name where the data will be stored
-        in the cloud. Follows SmartSPIM_***_stitched_***
-
-    channel_name: str
-        Channel name that was processed
-
-    classified_cells_path: str
-        Path to the detected cells
-
-    output: str
-        Output path of the neuroglancer
-        config and precomputed format
-
-    voxel_sizes: list
-        list of um per voxel along each dimension
-        ordered [z, y, x]
+    Returns
+    -------
+    json_state : dict
+        fully configured JSON for neuroglancer visualization
     """
 
-    logger.info(f"Reading cells from {classified_cells_path}")
-    df_cells = pd.read_csv(classified_cells_path)
-    df_cells = df_cells[["x", "y", "z"]]
-
-    cells = df_cells.to_dict(orient="records")
-
-    output_precomputed = os.path.join(output, "visualization/detected_precomputed")
-    json_name = os.path.join(output, "visualization/neuroglancer_config.json")
+    output_precomputed = os.path.join(
+        smartspim_config["save_path"], "visualization/detected_precomputed"
+    )
     utils.create_folder(output_precomputed)
     print(f"Output cells precomputed: {output_precomputed}")
 
-    logger.info(f"Image path in {image_path}")
-    example_data = {
-        "dimensions": {
-            # check the order
-            "z": {"voxel_size": voxel_sizes[0], "unit": "microns"},
-            "y": {"voxel_size": voxel_sizes[1], "unit": "microns"},
-            "x": {"voxel_size": voxel_sizes[2], "unit": "microns"},
-            "t": {"voxel_size": 0.001, "unit": "seconds"},
-        },
+    utils.generate_precomputed_cells(
+        cells_df, precompute_path=output_precomputed, configs=ng_configs
+    )
+
+    ng_path = f"s3://{bucket}/{smartspim_config['name']}/image_cell_segmentation/{smartspim_config['channel']}/visualization/neuroglancer_config.json"
+
+    if isinstance(ng_configs["orientation"], dict):
+        crossSectionOrientation = utils.volume_orientation(ng_configs["orientation"])
+    else:
+        crossSectionOrientation = [np.cos(np.pi / 4), 0.0, 0.0, np.cos(np.pi / 4)]
+
+    json_state = {
+        "ng_link": f"{ng_configs['base_url']}{ng_path}",
+        "title": smartspim_config["channel"],
+        "dimensions": ng_configs["dimensions"],
+        "crossSectionOrientation": crossSectionOrientation,
+        "crossSectionScale": ng_configs["crossSectionScale"],
+        "projectionScale": ng_configs["projectionScale"],
         "layers": [
             {
-                "source": image_path,
+                "source": f"zarr://s3://{bucket}/{smartspim_config['name']}/image_tile_fusing/OMEZarr/{smartspim_config['channel']}.zarr",
                 "type": "image",
-                "channel": 0,
-                "shader": {"color": "gray", "emitter": "RGB", "vec": "vec3"},
-                "shaderControls": {"normalized": {"range": [0, 500]}},  # Optional
+                "tab": "rendering",
+                "shader": '#uicontrol vec3 color color(default="#ffffff")\n#uicontrol invlerp normalized\nvoid main() {\nemitRGB(color * normalized());\n}',
+                "shaderControls": {
+                    "normalized": {
+                        "range": [0, dynamic_range[0]],
+                        "window": [0, dynamic_range[1]],
+                    },
+                },
+                "name": f"Channel: {smartspim_config['channel']}",
             },
             {
+                "source": f"precomputed://s3://{bucket}/{smartspim_config['name']}/image_cell_segmentation/{smartspim_config['channel']}/visualization/detected_precomputed",
                 "type": "annotation",
-                "source": f"precomputed://{output_precomputed}",
                 "tool": "annotatePoint",
-                "name": "classified cells",
-                "annotations": cells,
+                "tab": "annotations",
+                "crossSectionAnnotationSpacing": 1.0,
+                "name": "Classified Cells",
             },
         ],
+        "gpuMemoryLimit": ng_configs["gpuMemoryLimit"],
+        "selectedLayer": {
+            "visible": True,
+            "layer": f"Channel: {smartspim_config['channel']}",
+        },
+        "layout": "4panel",
     }
-    bucket_path = "aind-open-data"
-    neuroglancer_link = NgState(
-        input_config=example_data,
-        base_url="https://aind-neuroglancer-sauujisjxq-uw.a.run.app",
-        mount_service="s3",
-        bucket_path=bucket_path,
-        output_json=os.path.join(output, "visualization"),
-        json_name=json_name,
-    )
-
-    json_state = neuroglancer_link.state
-    json_state["ng_link"] = (
-        f"https://aind-neuroglancer-sauujisjxq-uw.a.run.app#!s3://{bucket_path}/{dataset_name}/image_cell_segmentation/{channel_name}/visualization/neuroglancer_config.json"
-    )
-
-    json_state["layers"][0][
-        "source"
-    ] = f"zarr://s3://{bucket_path}/{dataset_name}/image_tile_fusing/OMEZarr/{channel_name}.zarr"
-
-    json_state["layers"][1][
-        "source"
-    ] = f"precomputed://s3://{bucket_path}/{dataset_name}/image_cell_segmentation/{channel_name}/visualization/detected_precomputed"
 
     logger.info(f"Visualization link: {json_state['ng_link']}")
-    output_path = os.path.join(output, json_name)
+    output_path = os.path.join(
+        smartspim_config["save_path"], "visualization/neuroglancer_config.json"
+    )
 
     with open(output_path, "w") as outfile:
         json.dump(json_state, outfile, indent=2)
@@ -729,6 +718,7 @@ def generate_neuroglancer_link(
 
 def main(
     smartspim_config: dict,
+    neuroglancer_config: dict,
     cell_proposals: np.array,
     ng_voxel_sizes: List[float] = [2.0, 1.8, 1.8],
 ):
@@ -782,7 +772,7 @@ def main(
 
     # merge block .xmls and .csvs into single file
     # merge_xml(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
-    classified_cells_path = merge_csv(
+    classified_cells_path, cells_df = merge_csv(
         smartspim_config["metadata_path"], smartspim_config["save_path"], logger
     )
 
@@ -793,15 +783,10 @@ def main(
         f"{smartspim_config['input_data']}/{smartspim_config['input_channel']}"
     )
 
-    # create neuroglancer link
+    dynamic_range = utils.calculate_dynamic_range(image_path, 99, 3)
+
     generate_neuroglancer_link(
-        image_path,
-        smartspim_config["name"],
-        smartspim_config["channel"],
-        classified_cells_path,
-        smartspim_config["save_path"],
-        ng_voxel_sizes,
-        logger,
+        cells_df, neuroglancer_config, smartspim_config, dynamic_range, logger
     )
 
     utils.generate_processing(

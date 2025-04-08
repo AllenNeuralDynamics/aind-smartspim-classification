@@ -14,7 +14,6 @@ RUN apt-get -y install gcc g++ libcublas-12-0 libpcre3
 RUN pip install -U --no-cache-dir \
     aind-large-scale-prediction==1.0.0 \
     aind-data-schema==1.0.0 \
-    aind-ng-link==1.0.6 \
     psutil==5.9.8 \
     jupyter-server-proxy==3.2.2 \
     cellfinder>=1.0.0 \

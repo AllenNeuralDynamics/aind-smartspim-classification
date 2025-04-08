@@ -315,6 +315,7 @@ def run():
 
     # It is assumed that these files
     # will be in the data folder
+    print(f"Data folder: {data_folder}")
     required_input_elements = [str(smartspim_production_models)]
 
     missing_files = validate_capsule_inputs(required_input_elements)
@@ -428,12 +429,33 @@ def run():
             ]
             * 3,
         )
+        
+        acquisition = utils.read_json_as_dict(f"{data_folder}/acquisition.json")
+        res = {}
+        for axis in pipeline_config['stitching']['resolution']:
+            res[axis['axis_name']] = axis['resolution']
+
+        neuroglancer_config = {
+            "base_url": "https://neuroglancer-demo.appspot.com/#!",
+            "crossSectionScale": 15,
+            "projectionScale": 16384,
+            "orientation": acquisition,
+            "dimensions" : {
+                "z": [res['Z'] * 10**-6, 'm' ],
+                "y": [res['Y'] * 10**-6, 'm' ],
+                "x": [res['X'] * 10**-6, 'm' ],
+                "t": [0.001, 's'],
+            },
+            "rank": 3,
+            "gpuMemoryLimit": 1500000000,
+        }
 
         print("Cell proposals: ", cell_proposals.shape)
         print("Model params: ", smartspim_config["model_config"])
 
         classification.main(
             smartspim_config=smartspim_config,
+            neuroglancer_config = neuroglancer_config,
             cell_proposals=cell_proposals,
         )
 
