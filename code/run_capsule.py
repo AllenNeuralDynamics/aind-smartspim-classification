@@ -431,6 +431,9 @@ def run():
         )
         
         acquisition = utils.read_json_as_dict(f"{data_folder}/acquisition.json")
+        res = {}
+        for axis in pipeline_config['stitching']['resolution']:
+            res[axis['axis_name']] = axis['resolution']
 
         neuroglancer_config = {
             "base_url": "https://neuroglancer-demo.appspot.com/#!",
@@ -438,9 +441,9 @@ def run():
             "projectionScale": 16384,
             "orientation": acquisition,
             "dimensions" : {
-                "z": [2.0 * 10**-6, 'm' ],
-                "y": [1.8 * 10**-6, 'm' ],
-                "x": [1.8 * 10**-6, 'm' ],
+                "z": [res['Z'] * 10**-6, 'm' ],
+                "y": [res['Y'] * 10**-6, 'm' ],
+                "x": [res['X'] * 10**-6, 'm' ],
                 "t": [0.001, 's'],
             },
             "rank": 3,
