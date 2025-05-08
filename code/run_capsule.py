@@ -391,23 +391,28 @@ def run():
 
         print("Final cell classification config: ", smartspim_config)
 
-        # Remove comment when new detection is deployed
-        # cell_proposals = np.load(f"{data_folder}/spots.npy")
-
-        proposals_path_xml = f"{data_folder}/{proposal_folder}/detected_cells.xml"
-        proposals_path_csv = f"{data_folder}/{proposal_folder}/cell_likelihoods.csv"
+        # allows for backwards compatibility and reprocessing
+        proposal_assets = [
+            "detected_cells.xml",
+            "detected_cells.csv",
+            "cell_likelihoods.csv"
+        ]
 
         cell_proposals = np.empty(0, dtype=np.uint32)
+        found_proposals = False
 
-        if os.path.exists(proposals_path_xml):
-            print(f"Reading proposals from {proposals_path_xml}")
-            cell_proposals = parse_cell_xml(proposals_path_xml)
+        for file in proposal_assets:
+            proposals_path = f"{data_folder}/{proposal_folder}/{file}"
+            if os.path.exists(proposals_path):
+                found_proposals = True
+                if os.path.splitext(proposals_path)[1] == '.xml':
+                    print(f"Reading proposals from {proposals_path}")
+                    cell_proposals = parse_cell_xml(proposals_path)
+                elif os.path.exists(proposals_path) and os.path.splitext(proposals_path)[1] == '.csv':
+                    print(f"Reading proposals from {proposals_path}")
+                    cell_proposals = parse_cell_csv(proposals_path)
 
-        elif os.path.exists(proposals_path_csv):
-            print(f"Reading proposals from {proposals_path_csv}")
-            cell_proposals = parse_cell_csv(proposals_path_csv)
-
-        else:
+        if not found_proposals:
             msg = (
                 "Cell proposals are not in"
                 f"{proposals_path_xml} nor {proposals_path_csv}"
