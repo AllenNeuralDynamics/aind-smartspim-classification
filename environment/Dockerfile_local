@@ -1,31 +1,61 @@
-FROM tensorflow/tensorflow:2.11.0-gpu
-LABEL maintainer="Camilo Laiton <camilo.laiton@alleninstitute.org>"
+# ---------- Stage 1: Builder ----------
+FROM tensorflow/tensorflow:2.11.0-gpu as builder
+# --------------------- #
+#      METADATA         #
+# --------------------- #
+LABEL maintainer="Camilo Laiton <camilo.laiton@alleninstitute.org>" \
+      org.opencontainers.image.title="Image Cell Classification" \
+      org.opencontainers.image.description="Container for cell classification in lightsheet images" \
+      org.opencontainers.image.version="0.0.6" \
+      org.opencontainers.image.licenses="MIT"
 
 ARG DEBIAN_FRONTEND=noninteractive
+ENV CONDA_DIR=/opt/conda
+ENV PATH="$CONDA_DIR/bin:$PATH"
+ENV CONDA_ENV=cell_classification
 
-RUN apt-get update && apt-get install -y --no-install-recommends wget git && \
-    wget -qO /miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \
-    bash /miniconda.sh -b -p /opt/conda && \
-    rm /miniconda.sh && \
-    apt-get remove --purge -y wget && \
-    apt-get autoremove -y && \
+# --------------------- #
+#   SYSTEM DEPENDENCIES #
+# --------------------- #
+# Install system dependencies and Miniconda
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        wget \
+        git && \
+    wget -qO /tmp/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \
+    bash /tmp/miniconda.sh -b -p $CONDA_DIR && \
+    rm /tmp/miniconda.sh && \
+    apt-get purge -y --auto-remove wget && \
     rm -rf /var/lib/apt/lists/*
 
-ENV PATH="/opt/conda/bin:$PATH"
-ENV CONDA_ENV=cell_seg
-
+# --------------------- #
+#     CONDA ENV SETUP   #
+# --------------------- #
+# Create conda environment and install packages
 RUN conda create -n $CONDA_ENV python=3.10 --no-default-packages -y && \
+    bash -c "source activate $CONDA_ENV && \
+        pip install --no-cache-dir \
+            aind-large-scale-prediction==1.0.0 \
+            aind-data-schema==1.0.0 \
+            aind-ng-link==1.0.6 \
+            psutil==5.9.8 \
+            jupyter-server-proxy==3.2.2 \
+            cellfinder>=1.0.0 \
+            argschema" && \
     conda clean --all --yes
+    
+# ---------- Stage 2: Runtime ----------
+FROM tensorflow/tensorflow:2.11.0-gpu
 
-ENV PATH="/opt/conda/envs/$CONDA_ENV/bin:$PATH"
+LABEL maintainer="Camilo Laiton <camilo.laiton@alleninstitute.org>" \
+      org.opencontainers.image.title="Image Cell Classification" \
+      org.opencontainers.image.description="Container for cell classification in lightsheet images" \
+      org.opencontainers.image.version="0.0.6" \
+      org.opencontainers.image.licenses="MIT"
 
-RUN pip install --no-cache-dir \
-    aind-large-scale-prediction==1.0.0 \
-    aind-data-schema==1.0.0 \
-    aind-ng-link==1.0.6 \
-    psutil==5.9.8 \
-    jupyter-server-proxy==3.2.2 \
-    cellfinder>=1.0.0 \
-    argschema
+ENV CONDA_DIR=/opt/conda
+ENV PATH="$CONDA_DIR/bin:$PATH"
+ENV CONDA_ENV=cell_classification
 
-CMD ["bash"]
+# Copy only the built conda environment from builder
+COPY --from=builder $CONDA_DIR $CONDA_DIR
