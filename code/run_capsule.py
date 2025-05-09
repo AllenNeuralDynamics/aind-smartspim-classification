@@ -360,7 +360,7 @@ def run():
 
         model_config = utils.read_json_as_dict(str(model_config_path))
         model_config["default_model"] = smartspim_production_models.joinpath(
-            model_config["default_model"]
+            "model_4_03162025/model.h5"
         )
 
         # Setting up configuration for inference
