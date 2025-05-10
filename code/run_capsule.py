@@ -65,8 +65,8 @@ def parse_cell_csv(csv_path: str):
         Numpy array with the proposals in
         ZYX order.
     """
-    df = pd.read_csv(csv_path, usecols=["x", "y", "z"])
-    zyx_array = df[["z", "y", "x"]].to_numpy(dtype=np.uint32)
+    df = pd.read_csv(csv_path, usecols=["X", "Y", "Z"])
+    zyx_array = df[["Z", "Y", "X"]].to_numpy(dtype=np.uint32)
 
     return zyx_array
 
