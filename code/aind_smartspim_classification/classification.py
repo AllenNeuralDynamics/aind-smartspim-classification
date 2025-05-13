@@ -28,6 +28,27 @@ from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
+import keras
+import tensorflow as tf
+import tensorflow.keras.backend as K
+
+@keras.saving.register_keras_serializable()
+def f1(y_true, y_pred):
+    y_pred = K.round(y_pred)
+    y_pred = K.cast(y_pred, tf.float32)
+    y_true = K.cast(y_true, tf.float32)
+
+    tp = K.sum(K.cast(y_true*y_pred, 'float'), axis=0)
+    tn = K.sum(K.cast((1-y_true)*(1-y_pred), 'float'), axis=0)
+    fp = K.sum(K.cast((1-y_true)*y_pred, 'float'), axis=0)
+    fn = K.sum(K.cast(y_true*(1-y_pred), 'float'), axis=0)
+
+    p = tp / (tp + fp + K.epsilon())
+    r = tp / (tp + fn + K.epsilon())
+
+    f1 = 2*p*r / (p+r+K.epsilon())
+    f1 = tf.where(tf.math.is_nan(f1), tf.zeros_like(f1), f1)
+    return K.mean(f1)
 
 def extract_centered_3d_block(
     big_block: np.array, center: Tuple, size: Tuple, pad_value: Optional[int] = 0
