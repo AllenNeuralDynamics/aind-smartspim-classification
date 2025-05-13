@@ -17,4 +17,5 @@ RUN pip install -U --no-cache-dir \
     psutil==5.9.8 \
     jupyter-server-proxy==3.2.2 \
     cellfinder>=1.0.0 \
+    tensorflow \
     argschema
