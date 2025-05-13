@@ -812,7 +812,10 @@ def main(
 
     # run cell detection
     image_path, data_processes = cell_classification(
-        smartspim_config=smartspim_config, logger=logger, cell_proposals=cell_proposals
+        smartspim_config=smartspim_config, 
+        logger=logger, 
+        cell_proposals=cell_proposals,
+        standardize = True
     )
 
     # merge block .xmls and .csvs into single file
