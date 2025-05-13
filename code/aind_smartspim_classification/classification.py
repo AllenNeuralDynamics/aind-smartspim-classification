@@ -175,6 +175,7 @@ def cell_classification(
     target_size_mb: Optional[int] = 2048,
     n_workers: Optional[int] = 0,
     super_chunksize: Optional[Tuple] = None,
+    standardize = False,
 ):
     """
     Runs cell classification based on a set of proposals
@@ -212,6 +213,10 @@ def cell_classification(
     super_chunksize: Optional[Tuple] = None
         Chunksize that will be pulled from the cloud in
         a single call. prediction_chunksize > super_chunksize.
+
+    standardize: bool
+        If you want to normalize and standardize your data before
+        passing to the model
 
     """
     start_date_time = datetime.now()
@@ -437,6 +442,25 @@ def cell_classification(
             previous_cell_count = processed_cells
             processed_cells += picked_proposals.shape[0]
             curr_cell_count = processed_cells - previous_cell_count
+
+            if standardize:
+                print(f"blocks shape: {blocks_to_classify.shape}")
+                means = [
+                    np.mean(blocks_to_classify[:, :, :, 0]),
+                    np.mean(blocks_to_classify[:, :, :, 1])
+                ]
+
+                stds = [
+                    np.std(blocks_to_classify[:, :, :, 0]),
+                    np.std(blocks_to_classify[:, :, :, 1])
+                ]
+
+                for i in range(2):
+                    blocks_to_classify[:, :, :, i] -= means[i]
+                    blocks_to_classify[:, :, :, i] /= (stds[i] + 1e-7)
+
+                print(f"Signal mean: {np.mean(blocks_to_classify[:, :, :, 0])}")
+                print(f"Background mean: {np.std(blocks_to_classify[:, :, :, 1])}")
 
             predictions_raw = model.predict(blocks_to_classify)
             predictions = predictions_raw.round()
