@@ -367,6 +367,7 @@ def run():
             os.path.join(
                 os.path.dirname(model_config["default_model"]),
                 'metadata.json'
+            )
         )
         model_config['metadata'] = model_metadata
 
