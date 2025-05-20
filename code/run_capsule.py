@@ -359,11 +359,16 @@ def run():
             raise FileNotFoundError(msg)
 
         model_config = utils.read_json_as_dict(str(model_config_path))
-        #model_config["default_model"] = smartspim_production_models.joinpath(
-        #    "model_4_03162025/model.keras"
-        #)
+        model_config["default_model"] = smartspim_production_models.joinpath(
+            model_config["default_model"]
+        )
 
-        model_config["default_model"] = Path(data_folder).joinpath('model.keras')
+        model_metadata = utils.read_json_as_dict(
+            os.path.join(
+                os.path.dirname(model_config["default_model"]),
+                'metadata.json'
+        )
+        model_config['metadata'] = model_metadata
 
         # Setting up configuration for inference
         default_config = dict()

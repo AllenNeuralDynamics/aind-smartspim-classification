@@ -28,8 +28,6 @@ import numpy as np
 import psutil
 from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
                                               Processing)
-# from cellfinder.core.classify.cube_generator import CubeGeneratorFromFile
-# from imlib.IO.cells import get_cells, save_cells
 from scipy import ndimage as ndi
 from scipy.signal import argrelmin
 

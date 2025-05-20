@@ -28,9 +28,8 @@ from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-import keras
 import tensorflow as tf
-import tensorflow.keras.backend as K
+import keras.backend as K
 
 @keras.saving.register_keras_serializable()
 def f1(y_true, y_pred):
@@ -172,7 +171,7 @@ def cell_classification(
     logger: logging.Logger,
     cell_proposals: np.array,
     prediction_chunksize: Optional[Tuple] = (128, 128, 128),
-    target_size_mb: Optional[int] = 2048,
+    target_size_mb: Optional[int] = 3048,
     n_workers: Optional[int] = 0,
     super_chunksize: Optional[Tuple] = None,
     standardize = False,
@@ -213,11 +212,6 @@ def cell_classification(
     super_chunksize: Optional[Tuple] = None
         Chunksize that will be pulled from the cloud in
         a single call. prediction_chunksize > super_chunksize.
-
-    standardize: bool
-        If you want to normalize and standardize your data before
-        passing to the model
-
     """
     start_date_time = datetime.now()
 
@@ -306,6 +300,16 @@ def cell_classification(
 
     if model_config is None:
         raise ValueError(f"Please, provide a model configuration: {smartspim_config}")
+
+    if 'normalization' in model_config.get('metadata'):
+        standardize = True
+        means = model_config.get('metadata')['normalization']['means']
+        standard_deviations = model_config.get('metadata')['normalization']['standard_deviations']
+
+        logger.info(f"Model means being used: {means}")
+        logger.info(f"Model STDs being used: {standard_deviations}")
+    else:
+        logger.info("Model being used does not contain normalizations parameters.")
 
     cube_width = model_config["parameters"]["cube_width"]
     cube_height = model_config["parameters"]["cube_height"]
@@ -444,20 +448,18 @@ def cell_classification(
             curr_cell_count = processed_cells - previous_cell_count
 
             if standardize:
-                print(f"blocks shape: {blocks_to_classify.shape}")
-                means = [
-                    np.mean(blocks_to_classify[:, :, :, 0]),
-                    np.mean(blocks_to_classify[:, :, :, 1])
-                ]
-
-                stds = [
-                    np.std(blocks_to_classify[:, :, :, 0]),
-                    np.std(blocks_to_classify[:, :, :, 1])
-                ]
 
                 for i in range(2):
-                    blocks_to_classify[:, :, :, i] -= means[i]
-                    blocks_to_classify[:, :, :, i] /= (stds[i] + 1e-7)
+                    blocks_to_classify[:, :, :, :, i] -= means[i]
+                    blocks_to_classify[:, :, :, :, i] /= (standard_deviations[i] + 1e-7)
+
+                logger.info(
+                    f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])} and STD {np.std(blocks_to_classify[:, :, :, :, 0])}"
+                )
+
+                logger.info(
+                    f"Normalized background mean: {np.mean(blocks_to_classify[:, :, :, :, 1])} and STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
+                )
 
                 print(f"Signal mean: {np.mean(blocks_to_classify[:, :, :, 0])}")
                 print(f"Background mean: {np.std(blocks_to_classify[:, :, :, 1])}")
@@ -815,7 +817,6 @@ def main(
         smartspim_config=smartspim_config, 
         logger=logger, 
         cell_proposals=cell_proposals,
-        standardize = True
     )
 
     # merge block .xmls and .csvs into single file
