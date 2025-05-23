@@ -28,26 +28,28 @@ from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-import tensorflow as tf
 import keras.backend as K
+import tensorflow as tf
 
-@keras.saving.register_keras_serializable()
-def f1(y_true, y_pred):
-    y_pred = K.round(y_pred)
-    y_pred = K.cast(y_pred, tf.float32)
-    y_true = K.cast(y_true, tf.float32)
+# Not compatible with new keras and will have to figure out
+# @keras.saving.register_keras_serializable()
+# def f1(y_true, y_pred):
+#    y_pred = K.round(y_pred)
+#    y_pred = K.cast(y_pred, tf.float32)
+#    y_true = K.cast(y_true, tf.float32)
+#
+#    tp = K.sum(K.cast(y_true * y_pred, "float"), axis=0)
+#    tn = K.sum(K.cast((1 - y_true) * (1 - y_pred), "float"), axis=0)
+#    fp = K.sum(K.cast((1 - y_true) * y_pred, "float"), axis=0)
+#    fn = K.sum(K.cast(y_true * (1 - y_pred), "float"), axis=0)
 
-    tp = K.sum(K.cast(y_true*y_pred, 'float'), axis=0)
-    tn = K.sum(K.cast((1-y_true)*(1-y_pred), 'float'), axis=0)
-    fp = K.sum(K.cast((1-y_true)*y_pred, 'float'), axis=0)
-    fn = K.sum(K.cast(y_true*(1-y_pred), 'float'), axis=0)
+#    p = tp / (tp + fp + K.epsilon())
+#    r = tp / (tp + fn + K.epsilon())
 
-    p = tp / (tp + fp + K.epsilon())
-    r = tp / (tp + fn + K.epsilon())
+#    f1 = 2 * p * r / (p + r + K.epsilon())
+#    f1 = tf.where(tf.math.is_nan(f1), tf.zeros_like(f1), f1)
+#    return K.mean(f1)
 
-    f1 = 2*p*r / (p+r+K.epsilon())
-    f1 = tf.where(tf.math.is_nan(f1), tf.zeros_like(f1), f1)
-    return K.mean(f1)
 
 def extract_centered_3d_block(
     big_block: np.array, center: Tuple, size: Tuple, pad_value: Optional[int] = 0
@@ -300,10 +302,12 @@ def cell_classification(
     if model_config is None:
         raise ValueError(f"Please, provide a model configuration: {smartspim_config}")
 
-    if 'normalization' in model_config['metadata'].keys():
+    if "normalization" in model_config["metadata"].keys():
         standardize = True
-        means = model_config['metadata']['normalization']['means']
-        standard_deviations = model_config['metadata']['normalization']['standard_deviations']
+        means = model_config["metadata"]["normalization"]["means"]
+        standard_deviations = model_config["metadata"]["normalization"][
+            "standard_deviations"
+        ]
 
         logger.info(f"Model means being used: {means}")
         logger.info(f"Model STDs being used: {standard_deviations}")
@@ -450,7 +454,7 @@ def cell_classification(
             if standardize:
                 for i in range(2):
                     blocks_to_classify[:, :, :, :, i] -= means[i]
-                    blocks_to_classify[:, :, :, :, i] /= (standard_deviations[i] + 1e-7)
+                    blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
 
                 logger.info(
                     f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}"
@@ -530,7 +534,7 @@ def cell_classification(
         if standardize:
             for i in range(2):
                 blocks_to_classify[:, :, :, :, i] -= means[i]
-                blocks_to_classify[:, :, :, :, i] /= (standard_deviations[i] + 1e-7)
+                blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
 
             logger.info(
                 f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}"
@@ -835,8 +839,8 @@ def main(
 
     # run cell detection
     image_path, data_processes = cell_classification(
-        smartspim_config=smartspim_config, 
-        logger=logger, 
+        smartspim_config=smartspim_config,
+        logger=logger,
         cell_proposals=cell_proposals,
     )
 
