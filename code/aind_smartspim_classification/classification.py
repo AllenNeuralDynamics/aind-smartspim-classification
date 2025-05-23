@@ -174,7 +174,6 @@ def cell_classification(
     target_size_mb: Optional[int] = 3048,
     n_workers: Optional[int] = 0,
     super_chunksize: Optional[Tuple] = None,
-    standardize = False,
 ):
     """
     Runs cell classification based on a set of proposals
@@ -301,14 +300,15 @@ def cell_classification(
     if model_config is None:
         raise ValueError(f"Please, provide a model configuration: {smartspim_config}")
 
-    if 'normalization' in model_config.get('metadata'):
+    if 'normalization' in model_config['metadata'].keys():
         standardize = True
-        means = model_config.get('metadata')['normalization']['means']
-        standard_deviations = model_config.get('metadata')['normalization']['standard_deviations']
+        means = model_config['metadata']['normalization']['means']
+        standard_deviations = model_config['metadata']['normalization']['standard_deviations']
 
         logger.info(f"Model means being used: {means}")
         logger.info(f"Model STDs being used: {standard_deviations}")
     else:
+        standardize = False
         logger.info("Model being used does not contain normalizations parameters.")
 
     cube_width = model_config["parameters"]["cube_width"]
@@ -448,21 +448,23 @@ def cell_classification(
             curr_cell_count = processed_cells - previous_cell_count
 
             if standardize:
-
                 for i in range(2):
                     blocks_to_classify[:, :, :, :, i] -= means[i]
                     blocks_to_classify[:, :, :, :, i] /= (standard_deviations[i] + 1e-7)
 
                 logger.info(
-                    f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])} and STD {np.std(blocks_to_classify[:, :, :, :, 0])}"
+                    f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}"
+                )
+                logger.info(
+                    f"Normalized signal STD {np.std(blocks_to_classify[:, :, :, :, 0])}"
                 )
 
                 logger.info(
-                    f"Normalized background mean: {np.mean(blocks_to_classify[:, :, :, :, 1])} and STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
+                    f"Normalized background mean: {np.mean(blocks_to_classify[:, :, :, :, 1])}"
                 )
-
-                print(f"Signal mean: {np.mean(blocks_to_classify[:, :, :, 0])}")
-                print(f"Background mean: {np.std(blocks_to_classify[:, :, :, 1])}")
+                logger.info(
+                    f"Normalized background STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
+                )
 
             predictions_raw = model.predict(blocks_to_classify)
             predictions = predictions_raw.round()
@@ -524,6 +526,25 @@ def cell_classification(
         previous_cell_count = processed_cells
         processed_cells += picked_proposals.shape[0]
         curr_cell_count = processed_cells - previous_cell_count
+
+        if standardize:
+            for i in range(2):
+                blocks_to_classify[:, :, :, :, i] -= means[i]
+                blocks_to_classify[:, :, :, :, i] /= (standard_deviations[i] + 1e-7)
+
+            logger.info(
+                f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}"
+            )
+            logger.info(
+                f"Normalized signal STD {np.std(blocks_to_classify[:, :, :, :, 0])}"
+            )
+
+            logger.info(
+                f"Normalized background mean: {np.mean(blocks_to_classify[:, :, :, :, 1])}"
+            )
+            logger.info(
+                f"Normalized background STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
+            )
 
         predictions_raw = model.predict(blocks_to_classify)
         predictions = predictions_raw.round()

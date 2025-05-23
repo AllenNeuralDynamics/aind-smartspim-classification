@@ -4,10 +4,10 @@ FROM $REGISTRY_HOST/codeocean/pytorch-tensorflow-jax:2.1
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN conda create -n ccf_class python=3.9
+RUN conda create -n cell_class python=3.9
 
 # Make RUN commands use the new environment:
-SHELL ["conda", "run", "-n", "ccf_class", "/bin/bash", "-c"]
+SHELL ["conda", "run", "-n", "cell_class", "/bin/bash", "-c"]
 
 ARG GIT_ASKPASS
 ARG GIT_ACCESS_TOKEN
