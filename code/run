@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -ex
+source /opt/conda/etc/profile.d/conda.sh
+conda activate cell_class
 
 # This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
 export KERAS_BACKEND=torch
