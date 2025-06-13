@@ -32,7 +32,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
         psutil==5.9.8 \
         jupyter-server-proxy==3.2.2 \
         cellfinder>=1.0.0 \
-        argschema
+        argschema \
+        pandas \
+        openpyxl
 
 # ---------- Stage 2: Runtime ----------
 FROM tensorflow/tensorflow:2.11.0-gpu-jupyter as runtime
