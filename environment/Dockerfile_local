@@ -34,7 +34,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
         cellfinder>=1.0.0 \
         argschema \
         pandas \
-        openpyxl
+        openpyxl \
+        tensorflow-gpu==2.11.0
 
 # ---------- Stage 2: Runtime ----------
 FROM tensorflow/tensorflow:2.11.0-gpu-jupyter as runtime
