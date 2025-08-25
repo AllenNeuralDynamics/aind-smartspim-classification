@@ -19,13 +19,14 @@ RUN apt-get -y install gcc g++ libcublas-12-0 libpcre3
 RUN conda install pytorch torchvision pytorch-cuda=11.8 -c pytorch -c nvidia
 
 RUN pip install -U --no-cache-dir \
-    git+https://github.com/nal10/aind-large-scale-prediction.git@feat-updated-tf \
+    git+https://github.com/AllenNeuralDynamics/aind-large-scale-prediction.git@unpinned-versions \
     aind-data-schema==1.0.0 \
+    aind-ng-link==1.0.6 \
     psutil==5.9.8 \
     jupyter-server-proxy==3.2.2 \
+    cellfinder>=1.0.0 \
     argschema \
-    cellfinder>=1.0.0 \   
     pandas \
     openpyxl \
-    keras==3.9.2\
-    tensorflow[and-cuda]==2.19.0
+    keras==3.10.0 \
+    tensorflow==2.18.0
