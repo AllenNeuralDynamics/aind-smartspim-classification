@@ -19,8 +19,8 @@ RUN apt-get -y install gcc g++ libcublas-12-0 libpcre3
 RUN conda install pytorch torchvision pytorch-cuda=11.8 -c pytorch -c nvidia
 
 RUN pip install -U --no-cache-dir \
-    git+https://github.com/AllenNeuralDynamics/aind-large-scale-prediction.git@unpinned-versions \
     aind-data-schema==1.0.0 \
+    git+https://github.com/AllenNeuralDynamics/aind-large-scale-prediction.git@unpinned-versions \
     aind-ng-link==1.0.6 \
     psutil==5.9.8 \
     jupyter-server-proxy==3.2.2 \
