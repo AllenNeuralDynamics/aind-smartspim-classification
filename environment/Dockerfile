@@ -20,8 +20,8 @@ RUN conda install pytorch torchvision pytorch-cuda=11.8 -c pytorch -c nvidia
 
 RUN pip install -U --no-cache-dir \
     aind-data-schema==1.0.0 \
-    git+https://github.com/AllenNeuralDynamics/aind-large-scale-prediction.git@unpinned-versions \
     aind-ng-link==1.0.6 \
+    git+https://github.com/AllenNeuralDynamics/aind-large-scale-prediction.git@unpinned-versions \
     psutil==5.9.8 \
     jupyter-server-proxy==3.2.2 \
     cellfinder>=1.0.0 \
