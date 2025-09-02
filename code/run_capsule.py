@@ -445,8 +445,11 @@ def run():
 
         acquisition = utils.read_json_as_dict(f"{data_folder}/acquisition.json")
         res = {}
-        for axis in pipeline_config["stitching"]["resolution"]:
-            res[axis["axis_name"]] = axis["resolution"]
+        
+        axis_names = [axis['name'] for axis in acquisition['axes']]
+        scales = [float(scale) for scale in acquisition['tiles'][0]['coordinate_transformations'][1]['scale']]
+        for name, scale in zip(axis_names, scales[::-1]):
+            res[name] = scale
 
         neuroglancer_config = {
             "base_url": "https://neuroglancer-demo.appspot.com/#!",
