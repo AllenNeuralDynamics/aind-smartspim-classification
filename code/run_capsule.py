@@ -149,15 +149,15 @@ def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict):
         Dictionary with the combined parameters
     """
 
-    default_config["input_channel"] = (
-        f"{pipeline_config['segmentation']['channel']}.zarr"
-    )
-    default_config["background_channel"] = (
-        f"{pipeline_config['segmentation']['background_channel']}.zarr"
-    )
+    default_config[
+        "input_channel"
+    ] = f"{pipeline_config['segmentation']['channel']}.zarr"
+    default_config[
+        "background_channel"
+    ] = f"{pipeline_config['segmentation']['background_channel']}.zarr"
     default_config["channel"] = pipeline_config["segmentation"]["channel"]
     default_config["input_scale"] = pipeline_config["segmentation"]["input_scale"]
-    default_config["chunk_size"] = int(pipeline_config["segmentation"]["chunksize"])
+    default_config["chunk_size"] = int(128)
 
     return default_config
 
@@ -445,9 +445,14 @@ def run():
 
         acquisition = utils.read_json_as_dict(f"{data_folder}/acquisition.json")
         res = {}
-        
-        axis_names = [axis['name'] for axis in acquisition['axes']]
-        scales = [float(scale) for scale in acquisition['tiles'][0]['coordinate_transformations'][1]['scale']]
+
+        axis_names = [axis["name"] for axis in acquisition["axes"]]
+        scales = [
+            float(scale)
+            for scale in acquisition["tiles"][0]["coordinate_transformations"][1][
+                "scale"
+            ]
+        ]
         for name, scale in zip(axis_names, scales[::-1]):
             res[name] = scale
 
