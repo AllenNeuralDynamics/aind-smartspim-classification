@@ -28,5 +28,5 @@ RUN pip install -U --no-cache-dir \
     argschema \
     pandas \
     openpyxl \
-    keras==3.10.0 \
-    tensorflow==2.18.0
+    keras==3.9.2\
+    tensorflow[and-cuda]==2.19.0
