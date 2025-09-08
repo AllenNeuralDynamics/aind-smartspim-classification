@@ -844,7 +844,7 @@ def generate_neuroglancer_link(
 def main(
     smartspim_config: dict,
     neuroglancer_config: dict,
-    cell_proposals: pd.DataFreame,
+    cell_proposals: pd.DataFrame,
     ng_voxel_sizes: List[float] = [2.0, 1.8, 1.8],
 ):
     """
