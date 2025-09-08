@@ -171,7 +171,7 @@ def upsample_position(position: List[int], downsample_factor: Tuple[int]):
 def cell_classification(
     smartspim_config: Dict,
     logger: logging.Logger,
-    cell_proposals: np.array,
+    cell_proposals: pd.DataFrame,
     prediction_chunksize: Optional[Tuple] = (128, 128, 128),
     target_size_mb: Optional[int] = 3048,
     n_workers: Optional[int] = 0,
@@ -190,9 +190,8 @@ def cell_classification(
     logger: logging.Logger,
         Logging object
 
-    cell_proposals: np.array
-        Proposals in the whole brain. These should be
-        ZYX coordinates.
+    cell_proposals: pd.DataFrame
+        Proposals in the whole brain. Required columns: ['Z', 'Y', 'X', 'fg', 'bg']
 
     prediction_chunksize: Optional[Tuple]
         Chunksize that will be used to run predictions on
@@ -345,6 +344,7 @@ def cell_classification(
     curr_blocks = 0
     blocks_to_classify = []
     picked_proposals = []
+    picked_intensities = []
     processed_cells = 0
     # Zarr at a downsampled resolution
     # Cell locations should be at this level
@@ -378,17 +378,26 @@ def cell_classification(
 
         proposals_in_block = cell_proposals[
             (
-                cell_proposals[:, 0] >= unpadded_global_slice[0].start
-            )  # within Z boundaries
-            & (cell_proposals[:, 0] < unpadded_global_slice[0].stop)
+                cell_proposals["Z"].between(
+                    unpadded_global_slice[0].start,
+                    unpadded_global_slice[0].stop,
+                    inclusive="left",
+                )
+            )
             & (
-                cell_proposals[:, 1] >= unpadded_global_slice[1].start
-            )  # Within Y boundaries
-            & (cell_proposals[:, 1] < unpadded_global_slice[1].stop)
+                cell_proposals["Y"].between(
+                    unpadded_global_slice[1].start,
+                    unpadded_global_slice[1].stop,
+                    inclusive="left",
+                )
+            )
             & (
-                cell_proposals[:, 2] >= unpadded_global_slice[2].start
-            )  # Within X boundaries
-            & (cell_proposals[:, 2] < unpadded_global_slice[2].stop)
+                cell_proposals["X"].between(
+                    unpadded_global_slice[2].start,
+                    unpadded_global_slice[2].stop,
+                    inclusive="left",
+                )
+            )
         ]
 
         global_pos_name = "_".join(
@@ -403,7 +412,12 @@ def cell_classification(
                 f"{proposals_in_block.shape[0]} proposals found in {global_pos_name}!"
             )
 
-            for proposal in proposals_in_block:
+            locations_in_block = proposals_in_block[["Z", "Y", "X"]].values
+            intensities_in_block = proposals_in_block.reset_index()[
+                ["fg", "bg", "index"]
+            ].values
+
+            for proposal, intensities in zip(locations_in_block, intensities_in_block):
                 local_coord_proposal = proposal[:3] - np.array(
                     global_coord_positions_start[0][1:]
                 )
@@ -430,6 +444,7 @@ def cell_classification(
                 extracted_block = extracted_block.transpose(-1, -2, -3, -4)
                 blocks_to_classify.append(extracted_block)
                 picked_proposals.append(proposal)
+                picked_intensities.append(intensities)
                 curr_blocks += 1
         else:
             logger.info(f"No proposals found in {global_pos_name}!")
@@ -439,6 +454,7 @@ def cell_classification(
         ):  # and len(blocks_to_classify) == len(picked_proposals)
             blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
             picked_proposals = np.array(picked_proposals, dtype=np.uint32)
+            picked_intensities = np.array(picked_intensities, dtype=np.float32)
 
             if blocks_to_classify.shape[0] != picked_proposals.shape[0]:
                 error = (
@@ -492,13 +508,30 @@ def cell_classification(
                 )
 
                 cell_likelihood.append(
-                    [cell_x, cell_y, cell_z, cell_type, predictions_raw[idx][1]]
+                    [
+                        cell_x,
+                        cell_y,
+                        cell_z,
+                        cell_type,
+                        predictions_raw[idx][1],
+                        *picked_intensities[idx, :],
+                    ]
                 )
 
             cell_likelihood = np.array(cell_likelihood)
 
             all_cells_df = pd.DataFrame(
-                cell_likelihood, columns=["x", "y", "z", "Class", "Cell Likelihood"]
+                cell_likelihood,
+                columns=[
+                    "x",
+                    "y",
+                    "z",
+                    "Class",
+                    "Cell Likelihood",
+                    "Foreground",
+                    "Background",
+                    "Cell ID",
+                ],
             )
 
             all_cells_df.to_csv(
@@ -509,6 +542,7 @@ def cell_classification(
             )
             curr_blocks = 0
             picked_proposals = []
+            picked_intensities = []
             blocks_to_classify = []
             logger.info(
                 f"[PROGRESS] Total of cells at this point: {processed_cells} - Restarted vars - blocks: {len(blocks_to_classify)} proposals: {len(picked_proposals)}"
@@ -519,6 +553,7 @@ def cell_classification(
     if curr_blocks:
         blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
         picked_proposals = np.array(picked_proposals, dtype=np.uint32)
+        picked_intensities = np.array(picked_intensities, dtype=np.float32)
 
         if blocks_to_classify.shape[0] != picked_proposals.shape[0]:
             error = (
@@ -572,13 +607,30 @@ def cell_classification(
             )
 
             cell_likelihood.append(
-                [cell_x, cell_y, cell_z, cell_type, predictions_raw[idx][1]]
+                [
+                    cell_x,
+                    cell_y,
+                    cell_z,
+                    cell_type,
+                    predictions_raw[idx][1],
+                    *picked_intensities[idx, :],
+                ]
             )
 
         cell_likelihood = np.array(cell_likelihood)
 
         all_cells_df = pd.DataFrame(
-            cell_likelihood, columns=["x", "y", "z", "Class", "Cell Likelihood"]
+            cell_likelihood,
+            columns=[
+                "x",
+                "y",
+                "z",
+                "Class",
+                "Cell Likelihood",
+                "Foreground",
+                "Background",
+                "Cell ID",
+            ],
         )
 
         all_cells_df.to_csv(
@@ -589,6 +641,7 @@ def cell_classification(
         )
         curr_blocks = 0
         picked_proposals = []
+        picked_intensities = []
         blocks_to_classify = []
 
     end_date_time = datetime.now()
@@ -791,7 +844,7 @@ def generate_neuroglancer_link(
 def main(
     smartspim_config: dict,
     neuroglancer_config: dict,
-    cell_proposals: np.array,
+    cell_proposals: pd.DataFreame,
     ng_voxel_sizes: List[float] = [2.0, 1.8, 1.8],
 ):
     """
@@ -804,7 +857,7 @@ def main(
         Dictionary with the smartspim configuration
         for that dataset
 
-    cell_proposals: np.array
+    cell_proposals: pd.DataFrame
         Cell proposals from the previous step.
 
     ng_voxel_sizes: List[float]

@@ -1,6 +1,6 @@
 """Init file for cell classification"""
 
-__version__ = "0.0.8"
+__version__ = "0.0.9"
 __authors__ = ["Camilo Laiton", "Nicholas Lusk"]
 __author_emails__ = [
     "camilo.laiton@alleninstitute.org",
