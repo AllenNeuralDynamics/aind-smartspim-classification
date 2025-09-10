@@ -60,14 +60,10 @@ def parse_cell_csv(csv_path: str):
 
     Returns
     -------
-    np.array
-        Numpy array with the proposals in
-        ZYX order.
+    pd.DataFream
+        Dataframe with cell locations and intensity values
     """
-    df = pd.read_csv(csv_path, usecols=["X", "Y", "Z"])
-    zyx_array = df[["Z", "Y", "X"]].to_numpy(dtype=np.uint32)
-
-    return zyx_array
+    return pd.read_csv(csv_path)
 
 
 def get_data_config(
@@ -435,8 +431,10 @@ def run():
         )
 
         # Downsample cells to the prediction scale
-        cell_proposals = downsample_cell_locations(
-            coordinates=cell_proposals,
+        cols = ["Z", "Y", "X"]
+        cell_proposals = cell_proposals.copy()
+        cell_proposals[cols] = downsample_cell_locations(
+            coordinates=cell_proposals[cols].to_numpy(),
             downscale_factors=[
                 int(smartspim_config["model_config"]["parameters"]["downsample"])
             ]
