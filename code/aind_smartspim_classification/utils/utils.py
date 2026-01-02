@@ -12,12 +12,12 @@ import json
 import logging
 import multiprocessing
 import os
-import struct
 import platform
+import struct
 import subprocess
 import time
-from multiprocessing.managers import BaseManager, NamespaceProxy
 from datetime import datetime
+from multiprocessing.managers import BaseManager, NamespaceProxy
 from pathlib import Path
 from typing import List, Optional
 
@@ -28,8 +28,6 @@ import numpy as np
 import psutil
 from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
                                               Processing)
-# from cellfinder.core.classify.cube_generator import CubeGeneratorFromFile
-# from imlib.IO.cells import get_cells, save_cells
 from scipy import ndimage as ndi
 from scipy.signal import argrelmin
 
@@ -245,6 +243,7 @@ def create_folder(dest_dir: PathLike, verbose: Optional[bool] = False) -> None:
             if e.errno != os.errno.EEXIST:
                 raise
 
+
 def volume_orientation(acquisition_params: dict):
     """
     Uses the acquisition orientation to set the cross-section
@@ -293,6 +292,7 @@ def volume_orientation(acquisition_params: dict):
 
     return orientation
 
+
 def calculate_dynamic_range(image_path: PathLike, percentile: 99, level: 3):
     """
     Calculates the default dynamic range for teh neuroglancer link
@@ -320,6 +320,7 @@ def calculate_dynamic_range(image_path: PathLike, percentile: 99, level: 3):
     dynamic_ranges = [int(range_max), window_max]
 
     return dynamic_ranges
+
 
 class ObjProxy(NamespaceProxy):
     """Returns a proxy instance for any user defined data-type. The proxy instance will have the namespace and
@@ -413,17 +414,21 @@ def generate_precomputed_cells(cells, precompute_path, configs):
 
     metadata = {
         "@type": "neuroglancer_annotations_v1",
-        "dimensions": dict((key, configs['dimensions'][key]) for key in ('z', 'y', 'x')),
+        "dimensions": dict(
+            (key, configs["dimensions"][key]) for key in ("z", "y", "x")
+        ),
         "lower_bound": [float(x) for x in l_bounds],
         "upper_bound": [float(x) for x in u_bounds],
         "annotation_type": "point",
         "properties": [],
         "relationships": [],
-        "by_id": {"key": "by_id",},
+        "by_id": {
+            "key": "by_id",
+        },
         "spatial": [
             {
                 "key": "spatial0",
-                "grid_shape": [1] * configs['rank'],
+                "grid_shape": [1] * configs["rank"],
                 "chunk_size": [max(1, float(x)) for x in u_bounds - l_bounds],
                 "limit": len(cell_list),
             },
@@ -444,14 +449,10 @@ def generate_precomputed_cells(cells, precompute_path, configs):
             buf.extend(struct.pack("<Q", total_count))
 
             with multiprocessing.Pool(processes=os.cpu_count()) as p:
-                p.starmap(
-                    buf_builder, [(x, y, z, buf) for (x, y, z) in cell_list]
-                )
+                p.starmap(buf_builder, [(x, y, z, buf) for (x, y, z) in cell_list])
 
             # write the ids at the end of the buffer as increasing integers
-            id_buf = struct.pack(
-                "<%sQ" % len(cell_list), *range(len(cell_list))
-            )
+            id_buf = struct.pack("<%sQ" % len(cell_list), *range(len(cell_list)))
             buf.extend(id_buf)
         else:
             buf = struct.pack("<Q", total_count)
@@ -461,18 +462,13 @@ def generate_precomputed_cells(cells, precompute_path, configs):
                 buf += pt_buf
 
             # write the ids at the end of the buffer as increasing integers
-            id_buf = struct.pack(
-                "<%sQ" % len(cell_list), *range(len(cell_list))
-            )
+            id_buf = struct.pack("<%sQ" % len(cell_list), *range(len(cell_list)))
             buf += id_buf
 
-        print(
-            "Building file took {0} minutes".format(
-                (time.time() - start_t) / 60
-            )
-        )
+        print("Building file took {0} minutes".format((time.time() - start_t) / 60))
 
         outfile.write(bytes(buf))
+
 
 def generate_processing(
     data_processes: List[DataProcess],
@@ -665,9 +661,30 @@ def print_system_information(logger: logging.Logger):
     logger: logging.Logger
         Logger object
     """
+    memory = get_memory_limit_bytes()
 
+    if memory:
+        memory = int(memory)
+        memory = get_size(memory)
+
+    slurm_id = os.environ.get("SLURM_JOBID")
     # System info
-    sep = "=" * 40
+    sep = "=" * 20
+    logger.info(f"{sep} Machine Information {sep}")
+    logger.info(f"Assigned cores: {get_cpu_limit()}")
+    logger.info(f"Assigned memory: {memory} GBs")
+    logger.info(f"Computation ID: {os.environ.get('CO_COMPUTATION_ID')}")
+    logger.info(f"Capsule ID: {os.environ.get('CO_CAPSULE_ID')}")
+    logger.info(f"Is pipeline execution?: {bool(os.environ.get('AWS_BATCH_JOB_ID'))}")
+    logger.info(f"Is pipeline execution in SLURM?: {bool(slurm_id)}")
+    logger.info(f"SLURM ID: {slurm_id}")
+    logger.info(f"SLURM GPUs: {os.environ.get('SLURM_JOB_GPUS')}")
+    logger.info(f"SLURM CPUs: {os.environ.get('SLURM_JOB_CPUS_PER_NODE')}")
+    logger.info(
+        f"SLURM variables {[( k, v ) for k, v in os.environ.items() if 'SLURM' in k]}"
+    )
+
+    logger.info(f"{sep} System Information {sep}")
     uname = platform.uname()
     logger.info(f"System: {uname.system}")
     logger.info(f"Node Name: {uname.node}")
@@ -739,7 +756,7 @@ def print_system_information(logger: logging.Logger):
     logger.info(f"Total Bytes Received: {get_size(net_io.bytes_recv)}")
 
 
-def get_code_ocean_cpu_limit():
+def get_cpu_limit():
     """
     Gets the Code Ocean capsule CPU limit
 
@@ -752,17 +769,80 @@ def get_code_ocean_cpu_limit():
     co_cpus = os.environ.get("CO_CPUS")
     aws_batch_job_id = os.environ.get("AWS_BATCH_JOB_ID")
 
+    # Trying to get CPU cores from Code Ocean
     if co_cpus:
         return co_cpus
     if aws_batch_job_id:
         return 1
-    with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as fp:
-        cfs_quota_us = int(fp.read())
-    with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as fp:
-        cfs_period_us = int(fp.read())
-    container_cpus = cfs_quota_us // cfs_period_us
+
+    # Trying to get CPU cores from SLURM
+    slurm_cpus = os.environ.get("SLURM_JOB_CPUS_PER_NODE")
+
+    # Total cpus in node SLURM_CPUS_ON_NODE
+    if slurm_cpus:
+        return slurm_cpus
+
+    try:
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as fp:
+            cfs_quota_us = int(fp.read())
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as fp:
+            cfs_period_us = int(fp.read())
+
+        container_cpus = cfs_quota_us // cfs_period_us
+
+    except FileNotFoundError as e:
+        container_cpus = 0
+
     # For physical machine, the `cfs_quota_us` could be '-1'
     return psutil.cpu_count(logical=False) if container_cpus < 1 else container_cpus
+
+
+def get_memory_limit_bytes():
+    """
+    Gets the best estimate of the memory limit (in bytes) for the current job.
+    Order of precedence:
+    1. CO_MEMORY environment variable (assumed in GB)
+    2. Cgroup memory limit (from /sys/fs/cgroup/)
+    3. SLURM environment variables
+    4. psutil system memory (total)
+    """
+    # 1. CO_MEMORY (in GB)
+    memory_env = os.environ.get("CO_MEMORY")
+    if memory_env:
+        try:
+            return int(memory_env)  # Convert GB → bytes
+        except ValueError:
+            pass  # Invalid format, fallback
+
+    # 2. cgroup memory limit (in bytes)
+    cgroup_path = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+    try:
+        with open(cgroup_path, "r") as f:
+            mem_bytes = int(f.read().strip())
+            # Some systems report a huge number when no limit is set
+            if mem_bytes < 1 << 50:  # Filter out values >1PB
+                return mem_bytes
+    except FileNotFoundError:
+        pass
+
+    # 3. SLURM memory allocation
+    mem_per_node = os.environ.get("SLURM_MEM_PER_NODE")  # in MB
+    if mem_per_node:
+        try:
+            return int(mem_per_node) * 1024**2  # MB → bytes
+        except ValueError:
+            pass
+
+    mem_per_cpu = os.environ.get("SLURM_MEM_PER_CPU")  # in MB
+    cpus = os.environ.get("SLURM_JOB_CPUS_PER_NODE")
+    if mem_per_cpu and cpus:
+        try:
+            return int(mem_per_cpu) * int(cpus) * 1024**2  # MB → bytes
+        except ValueError:
+            pass
+
+    # 4. Fallback: system-wide total memory
+    return psutil.virtual_memory().total
 
 
 def check_path_instance(obj: object) -> bool:

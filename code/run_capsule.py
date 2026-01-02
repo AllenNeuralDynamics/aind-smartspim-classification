@@ -14,7 +14,6 @@ from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import torch
-
 from aind_smartspim_classification import classification
 from aind_smartspim_classification.params import get_yaml
 from aind_smartspim_classification.utils import utils
@@ -61,14 +60,10 @@ def parse_cell_csv(csv_path: str):
 
     Returns
     -------
-    np.array
-        Numpy array with the proposals in
-        ZYX order.
+    pd.DataFream
+        Dataframe with cell locations and intensity values
     """
-    df = pd.read_csv(csv_path, usecols=["x", "y", "z"])
-    zyx_array = df[["z", "y", "x"]].to_numpy(dtype=np.uint32)
-
-    return zyx_array
+    return pd.read_csv(csv_path)
 
 
 def get_data_config(
@@ -150,15 +145,15 @@ def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict):
         Dictionary with the combined parameters
     """
 
-    default_config["input_channel"] = (
-        f"{pipeline_config['segmentation']['channel']}.zarr"
-    )
-    default_config["background_channel"] = (
-        f"{pipeline_config['segmentation']['background_channel']}.zarr"
-    )
+    default_config[
+        "input_channel"
+    ] = f"{pipeline_config['segmentation']['channel']}.zarr"
+    default_config[
+        "background_channel"
+    ] = f"{pipeline_config['segmentation']['background_channel']}.zarr"
     default_config["channel"] = pipeline_config["segmentation"]["channel"]
     default_config["input_scale"] = pipeline_config["segmentation"]["input_scale"]
-    default_config["chunk_size"] = 128
+    default_config["chunk_size"] = int(128)
 
     return default_config
 
@@ -340,7 +335,6 @@ def run():
     # the channels. If the channel key does not exist, it means
     # there are no segmentation channels splitted
     if channel_to_process is not None:
-
         # Folder where the detection files are stored from the previous step
         proposal_folder = f"cell_{channel_to_process}"
 
@@ -362,6 +356,13 @@ def run():
         model_config["default_model"] = smartspim_production_models.joinpath(
             model_config["default_model"]
         )
+
+        model_metadata = utils.read_json_as_dict(
+            os.path.join(
+                os.path.dirname(model_config["default_model"]), "metadata.json"
+            )
+        )
+        model_config["metadata"] = model_metadata
 
         # Setting up configuration for inference
         default_config = dict()
@@ -391,23 +392,31 @@ def run():
 
         print("Final cell classification config: ", smartspim_config)
 
-        # Remove comment when new detection is deployed
-        # cell_proposals = np.load(f"{data_folder}/spots.npy")
-
-        proposals_path_xml = f"{data_folder}/{proposal_folder}/detected_cells.xml"
-        proposals_path_csv = f"{data_folder}/{proposal_folder}/cell_likelihoods.csv"
+        # allows for backwards compatibility and reprocessing
+        proposal_assets = [
+            "detected_cells.xml",
+            "detected_cells.csv",
+            "cell_likelihoods.csv",
+        ]
 
         cell_proposals = np.empty(0, dtype=np.uint32)
+        found_proposals = False
 
-        if os.path.exists(proposals_path_xml):
-            print(f"Reading proposals from {proposals_path_xml}")
-            cell_proposals = parse_cell_xml(proposals_path_xml)
+        for file in proposal_assets:
+            proposals_path = f"{data_folder}/{proposal_folder}/{file}"
+            if os.path.exists(proposals_path):
+                found_proposals = True
+                if os.path.splitext(proposals_path)[1] == ".xml":
+                    print(f"Reading proposals from {proposals_path}")
+                    cell_proposals = parse_cell_xml(proposals_path)
+                elif (
+                    os.path.exists(proposals_path)
+                    and os.path.splitext(proposals_path)[1] == ".csv"
+                ):
+                    print(f"Reading proposals from {proposals_path}")
+                    cell_proposals = parse_cell_csv(proposals_path)
 
-        elif os.path.exists(proposals_path_csv):
-            print(f"Reading proposals from {proposals_path_csv}")
-            cell_proposals = parse_cell_csv(proposals_path_csv)
-
-        else:
+        if not found_proposals:
             msg = (
                 "Cell proposals are not in"
                 f"{proposals_path_xml} nor {proposals_path_csv}"
@@ -422,29 +431,39 @@ def run():
         )
 
         # Downsample cells to the prediction scale
-        cell_proposals = downsample_cell_locations(
-            coordinates=cell_proposals,
+        cols = ["Z", "Y", "X"]
+        cell_proposals = cell_proposals.copy()
+        cell_proposals[cols] = downsample_cell_locations(
+            coordinates=cell_proposals[cols].to_numpy(),
             downscale_factors=[
                 int(smartspim_config["model_config"]["parameters"]["downsample"])
             ]
             * 3,
         )
-        
+
         acquisition = utils.read_json_as_dict(f"{data_folder}/acquisition.json")
         res = {}
-        for axis in pipeline_config['stitching']['resolution']:
-            res[axis['axis_name']] = axis['resolution']
+
+        axis_names = [axis["name"] for axis in acquisition["axes"]]
+        scales = [
+            float(scale)
+            for scale in acquisition["tiles"][0]["coordinate_transformations"][1][
+                "scale"
+            ]
+        ]
+        for name, scale in zip(axis_names, scales[::-1]):
+            res[name] = scale
 
         neuroglancer_config = {
             "base_url": "https://neuroglancer-demo.appspot.com/#!",
             "crossSectionScale": 15,
             "projectionScale": 16384,
             "orientation": acquisition,
-            "dimensions" : {
-                "z": [res['Z'] * 10**-6, 'm' ],
-                "y": [res['Y'] * 10**-6, 'm' ],
-                "x": [res['X'] * 10**-6, 'm' ],
-                "t": [0.001, 's'],
+            "dimensions": {
+                "z": [res["Z"] * 10**-6, "m"],
+                "y": [res["Y"] * 10**-6, "m"],
+                "x": [res["X"] * 10**-6, "m"],
+                "t": [0.001, "s"],
             },
             "rank": 3,
             "gpuMemoryLimit": 1500000000,
@@ -455,7 +474,7 @@ def run():
 
         classification.main(
             smartspim_config=smartspim_config,
-            neuroglancer_config = neuroglancer_config,
+            neuroglancer_config=neuroglancer_config,
             cell_proposals=cell_proposals,
         )
 

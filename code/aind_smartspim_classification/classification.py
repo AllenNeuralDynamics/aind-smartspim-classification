@@ -28,6 +28,28 @@ from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
+import keras.backend as K
+import tensorflow as tf
+
+# Not compatible with new keras and will have to figure out
+# @keras.saving.register_keras_serializable()
+# def f1(y_true, y_pred):
+#    y_pred = K.round(y_pred)
+#    y_pred = K.cast(y_pred, tf.float32)
+#    y_true = K.cast(y_true, tf.float32)
+#
+#    tp = K.sum(K.cast(y_true * y_pred, "float"), axis=0)
+#    tn = K.sum(K.cast((1 - y_true) * (1 - y_pred), "float"), axis=0)
+#    fp = K.sum(K.cast((1 - y_true) * y_pred, "float"), axis=0)
+#    fn = K.sum(K.cast(y_true * (1 - y_pred), "float"), axis=0)
+
+#    p = tp / (tp + fp + K.epsilon())
+#    r = tp / (tp + fn + K.epsilon())
+
+#    f1 = 2 * p * r / (p + r + K.epsilon())
+#    f1 = tf.where(tf.math.is_nan(f1), tf.zeros_like(f1), f1)
+#    return K.mean(f1)
+
 
 def extract_centered_3d_block(
     big_block: np.array, center: Tuple, size: Tuple, pad_value: Optional[int] = 0
@@ -149,9 +171,9 @@ def upsample_position(position: List[int], downsample_factor: Tuple[int]):
 def cell_classification(
     smartspim_config: Dict,
     logger: logging.Logger,
-    cell_proposals: np.array,
+    cell_proposals: pd.DataFrame,
     prediction_chunksize: Optional[Tuple] = (128, 128, 128),
-    target_size_mb: Optional[int] = 2048,
+    target_size_mb: Optional[int] = 3048,
     n_workers: Optional[int] = 0,
     super_chunksize: Optional[Tuple] = None,
 ):
@@ -168,9 +190,8 @@ def cell_classification(
     logger: logging.Logger,
         Logging object
 
-    cell_proposals: np.array
-        Proposals in the whole brain. These should be
-        ZYX coordinates.
+    cell_proposals: pd.DataFrame
+        Proposals in the whole brain. Required columns: ['Z', 'Y', 'X', 'fg', 'bg']
 
     prediction_chunksize: Optional[Tuple]
         Chunksize that will be used to run predictions on
@@ -191,7 +212,6 @@ def cell_classification(
     super_chunksize: Optional[Tuple] = None
         Chunksize that will be pulled from the cloud in
         a single call. prediction_chunksize > super_chunksize.
-
     """
     start_date_time = datetime.now()
 
@@ -281,6 +301,19 @@ def cell_classification(
     if model_config is None:
         raise ValueError(f"Please, provide a model configuration: {smartspim_config}")
 
+    if "normalization" in model_config["metadata"].keys():
+        standardize = True
+        means = model_config["metadata"]["normalization"]["means"]
+        standard_deviations = model_config["metadata"]["normalization"][
+            "standard_deviations"
+        ]
+
+        logger.info(f"Model means being used: {means}")
+        logger.info(f"Model STDs being used: {standard_deviations}")
+    else:
+        standardize = False
+        logger.info("Model being used does not contain normalizations parameters.")
+
     cube_width = model_config["parameters"]["cube_width"]
     cube_height = model_config["parameters"]["cube_height"]
     cube_depth = model_config["parameters"]["cube_depth"]
@@ -311,6 +344,7 @@ def cell_classification(
     curr_blocks = 0
     blocks_to_classify = []
     picked_proposals = []
+    picked_intensities = []
     processed_cells = 0
     # Zarr at a downsampled resolution
     # Cell locations should be at this level
@@ -344,17 +378,26 @@ def cell_classification(
 
         proposals_in_block = cell_proposals[
             (
-                cell_proposals[:, 0] >= unpadded_global_slice[0].start
-            )  # within Z boundaries
-            & (cell_proposals[:, 0] < unpadded_global_slice[0].stop)
+                cell_proposals["Z"].between(
+                    unpadded_global_slice[0].start,
+                    unpadded_global_slice[0].stop,
+                    inclusive="left",
+                )
+            )
             & (
-                cell_proposals[:, 1] >= unpadded_global_slice[1].start
-            )  # Within Y boundaries
-            & (cell_proposals[:, 1] < unpadded_global_slice[1].stop)
+                cell_proposals["Y"].between(
+                    unpadded_global_slice[1].start,
+                    unpadded_global_slice[1].stop,
+                    inclusive="left",
+                )
+            )
             & (
-                cell_proposals[:, 2] >= unpadded_global_slice[2].start
-            )  # Within X boundaries
-            & (cell_proposals[:, 2] < unpadded_global_slice[2].stop)
+                cell_proposals["X"].between(
+                    unpadded_global_slice[2].start,
+                    unpadded_global_slice[2].stop,
+                    inclusive="left",
+                )
+            )
         ]
 
         global_pos_name = "_".join(
@@ -369,7 +412,12 @@ def cell_classification(
                 f"{proposals_in_block.shape[0]} proposals found in {global_pos_name}!"
             )
 
-            for proposal in proposals_in_block:
+            locations_in_block = proposals_in_block[["Z", "Y", "X"]].values
+            intensities_in_block = proposals_in_block.reset_index()[
+                ["fg", "bg", "index"]
+            ].values
+
+            for proposal, intensities in zip(locations_in_block, intensities_in_block):
                 local_coord_proposal = proposal[:3] - np.array(
                     global_coord_positions_start[0][1:]
                 )
@@ -396,6 +444,7 @@ def cell_classification(
                 extracted_block = extracted_block.transpose(-1, -2, -3, -4)
                 blocks_to_classify.append(extracted_block)
                 picked_proposals.append(proposal)
+                picked_intensities.append(intensities)
                 curr_blocks += 1
         else:
             logger.info(f"No proposals found in {global_pos_name}!")
@@ -405,6 +454,7 @@ def cell_classification(
         ):  # and len(blocks_to_classify) == len(picked_proposals)
             blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
             picked_proposals = np.array(picked_proposals, dtype=np.uint32)
+            picked_intensities = np.array(picked_intensities, dtype=np.float32)
 
             if blocks_to_classify.shape[0] != picked_proposals.shape[0]:
                 error = (
@@ -416,6 +466,25 @@ def cell_classification(
             previous_cell_count = processed_cells
             processed_cells += picked_proposals.shape[0]
             curr_cell_count = processed_cells - previous_cell_count
+
+            if standardize:
+                for i in range(2):
+                    blocks_to_classify[:, :, :, :, i] -= means[i]
+                    blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
+
+                logger.info(
+                    f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}"
+                )
+                logger.info(
+                    f"Normalized signal STD {np.std(blocks_to_classify[:, :, :, :, 0])}"
+                )
+
+                logger.info(
+                    f"Normalized background mean: {np.mean(blocks_to_classify[:, :, :, :, 1])}"
+                )
+                logger.info(
+                    f"Normalized background STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
+                )
 
             predictions_raw = model.predict(blocks_to_classify)
             predictions = predictions_raw.round()
@@ -439,13 +508,30 @@ def cell_classification(
                 )
 
                 cell_likelihood.append(
-                    [cell_x, cell_y, cell_z, cell_type, predictions_raw[idx][1]]
+                    [
+                        cell_x,
+                        cell_y,
+                        cell_z,
+                        cell_type,
+                        predictions_raw[idx][1],
+                        *picked_intensities[idx, :],
+                    ]
                 )
 
             cell_likelihood = np.array(cell_likelihood)
 
             all_cells_df = pd.DataFrame(
-                cell_likelihood, columns=["x", "y", "z", "Class", "Cell Likelihood"]
+                cell_likelihood,
+                columns=[
+                    "x",
+                    "y",
+                    "z",
+                    "Class",
+                    "Cell Likelihood",
+                    "Foreground",
+                    "Background",
+                    "Cell ID",
+                ],
             )
 
             all_cells_df.to_csv(
@@ -456,6 +542,7 @@ def cell_classification(
             )
             curr_blocks = 0
             picked_proposals = []
+            picked_intensities = []
             blocks_to_classify = []
             logger.info(
                 f"[PROGRESS] Total of cells at this point: {processed_cells} - Restarted vars - blocks: {len(blocks_to_classify)} proposals: {len(picked_proposals)}"
@@ -466,6 +553,7 @@ def cell_classification(
     if curr_blocks:
         blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
         picked_proposals = np.array(picked_proposals, dtype=np.uint32)
+        picked_intensities = np.array(picked_intensities, dtype=np.float32)
 
         if blocks_to_classify.shape[0] != picked_proposals.shape[0]:
             error = (
@@ -477,6 +565,25 @@ def cell_classification(
         previous_cell_count = processed_cells
         processed_cells += picked_proposals.shape[0]
         curr_cell_count = processed_cells - previous_cell_count
+
+        if standardize:
+            for i in range(2):
+                blocks_to_classify[:, :, :, :, i] -= means[i]
+                blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
+
+            logger.info(
+                f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}"
+            )
+            logger.info(
+                f"Normalized signal STD {np.std(blocks_to_classify[:, :, :, :, 0])}"
+            )
+
+            logger.info(
+                f"Normalized background mean: {np.mean(blocks_to_classify[:, :, :, :, 1])}"
+            )
+            logger.info(
+                f"Normalized background STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
+            )
 
         predictions_raw = model.predict(blocks_to_classify)
         predictions = predictions_raw.round()
@@ -500,13 +607,30 @@ def cell_classification(
             )
 
             cell_likelihood.append(
-                [cell_x, cell_y, cell_z, cell_type, predictions_raw[idx][1]]
+                [
+                    cell_x,
+                    cell_y,
+                    cell_z,
+                    cell_type,
+                    predictions_raw[idx][1],
+                    *picked_intensities[idx, :],
+                ]
             )
 
         cell_likelihood = np.array(cell_likelihood)
 
         all_cells_df = pd.DataFrame(
-            cell_likelihood, columns=["x", "y", "z", "Class", "Cell Likelihood"]
+            cell_likelihood,
+            columns=[
+                "x",
+                "y",
+                "z",
+                "Class",
+                "Cell Likelihood",
+                "Foreground",
+                "Background",
+                "Cell ID",
+            ],
         )
 
         all_cells_df.to_csv(
@@ -517,6 +641,7 @@ def cell_classification(
         )
         curr_blocks = 0
         picked_proposals = []
+        picked_intensities = []
         blocks_to_classify = []
 
     end_date_time = datetime.now()
@@ -719,7 +844,7 @@ def generate_neuroglancer_link(
 def main(
     smartspim_config: dict,
     neuroglancer_config: dict,
-    cell_proposals: np.array,
+    cell_proposals: pd.DataFrame,
     ng_voxel_sizes: List[float] = [2.0, 1.8, 1.8],
 ):
     """
@@ -732,7 +857,7 @@ def main(
         Dictionary with the smartspim configuration
         for that dataset
 
-    cell_proposals: np.array
+    cell_proposals: pd.DataFrame
         Cell proposals from the previous step.
 
     ng_voxel_sizes: List[float]
@@ -767,7 +892,9 @@ def main(
 
     # run cell detection
     image_path, data_processes = cell_classification(
-        smartspim_config=smartspim_config, logger=logger, cell_proposals=cell_proposals
+        smartspim_config=smartspim_config,
+        logger=logger,
+        cell_proposals=cell_proposals,
     )
 
     # merge block .xmls and .csvs into single file

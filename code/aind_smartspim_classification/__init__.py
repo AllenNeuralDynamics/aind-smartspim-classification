@@ -1,6 +1,6 @@
 """Init file for cell classification"""
 
-__version__ = "0.0.6"
+__version__ = "0.0.9"
 __authors__ = ["Camilo Laiton", "Nicholas Lusk"]
 __author_emails__ = [
     "camilo.laiton@alleninstitute.org",
@@ -20,4 +20,4 @@ __maintainer_emails__ = [
 ]
 __title__ = "aind-smartspim-cell-proposals"
 __status__ = "Production"  # 'Production', 'Beta'
-__pipeline_version__ = "3.0.0"
+__pipeline_version__ = "4.0.0"

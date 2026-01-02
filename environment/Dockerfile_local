@@ -1,31 +1,100 @@
-FROM tensorflow/tensorflow:2.11.0-gpu
-LABEL maintainer="Camilo Laiton <camilo.laiton@alleninstitute.org>"
+# ---------- Stage 1: Builder ----------
+FROM tensorflow/tensorflow:2.18.0-gpu as builder
 
 ARG DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends wget git && \
-    wget -qO /miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \
-    bash /miniconda.sh -b -p /opt/conda && \
-    rm /miniconda.sh && \
-    apt-get remove --purge -y wget && \
-    apt-get autoremove -y && \
+# Install essential system packages and Python 3.10
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        wget \
+        curl \
+        git \
+        build-essential \
+        software-properties-common \
+        libapt-pkg-dev \
+        python3.10 \
+        python3.10-dev \
+        python3.10-distutils \
+        python3.10-venv && \
     rm -rf /var/lib/apt/lists/*
 
-ENV PATH="/opt/conda/bin:$PATH"
-ENV CONDA_ENV=cell_seg
+# Install pip, setuptools, and wheel for Python 3.10
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10 && \
+    pip install --no-cache-dir setuptools wheel
 
-RUN conda create -n $CONDA_ENV python=3.10 --no-default-packages -y && \
-    conda clean --all --yes
+# Build and install python-apt for Python 3.10
+RUN git clone https://salsa.debian.org/apt-team/python-apt.git && \
+    cd python-apt && \
+    git checkout 2.4.0 && \
+    python3.10 setup.py build && \
+    python3.10 setup.py install && \
+    cd .. && rm -rf python-apt
 
-ENV PATH="/opt/conda/envs/$CONDA_ENV/bin:$PATH"
+# Create virtual environment with Python 3.10
+RUN python3.10 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-RUN pip install --no-cache-dir \
-    aind-large-scale-prediction==1.0.0 \
-    aind-data-schema==1.0.0 \
-    aind-ng-link==1.0.6 \
-    psutil==5.9.8 \
-    jupyter-server-proxy==3.2.2 \
-    cellfinder>=1.0.0 \
-    argschema
+# Install Python packages in virtualenv
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        aind-large-scale-prediction==1.0.0 \
+        aind-data-schema==1.0.0 \
+        aind-ng-link==1.0.6 \
+        psutil==5.9.8 \
+        jupyter-server-proxy==3.2.2 \
+        cellfinder>=1.0.0 \
+        argschema \
+        pandas \
+        openpyxl \
+        keras==3.11.1 \
+        tensorflow==2.18.0
 
+# ---------- Stage 2: Runtime ----------
+FROM tensorflow/tensorflow:2.18.0-gpu as runtime
+
+LABEL maintainer="Camilo Laiton <camilo.laiton@alleninstitute.org>" \
+      org.opencontainers.image.title="Image Cell Classification" \
+      org.opencontainers.image.description="Container for cell classification in lightsheet images" \
+      org.opencontainers.image.version="0.0.6" \
+      org.opencontainers.image.licenses="MIT"
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install runtime dependencies and Python 3.10
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        git \
+        build-essential \
+        libapt-pkg-dev \
+        software-properties-common \
+        python3.10 \
+        python3.10-dev \
+        python3.10-distutils && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install pip, setuptools, and wheel for Python 3.10
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10 && \
+    pip install --no-cache-dir setuptools wheel
+
+# Build and install python-apt for Python 3.10
+RUN git clone https://salsa.debian.org/apt-team/python-apt.git && \
+    cd python-apt && \
+    git checkout 2.4.0 && \
+    python3.10 setup.py build && \
+    python3.10 setup.py install && \
+    cd .. && rm -rf python-apt
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set working directory
+WORKDIR /app
+
+# Default command
 CMD ["bash"]
