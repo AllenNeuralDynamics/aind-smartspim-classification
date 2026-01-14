@@ -13,18 +13,18 @@ from typing import Dict, List, Optional, Tuple
 
 import keras
 import keras.ops as ops
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-import matplotlib.pyplot as plt
-from scipy.ndimage import gaussian_filter1d
-from scipy.signal import argrelmin
 from aind_data_schema.core.processing import DataProcess, ProcessName
 from aind_large_scale_prediction.generator.dataset import create_data_loader
 from aind_large_scale_prediction.generator.utils import (
     concatenate_lazy_data, recover_global_position, unpad_global_coords)
 from aind_large_scale_prediction.io import ImageReaderFactory
 from natsort import natsorted
+from scipy.ndimage import gaussian_filter1d
+from scipy.signal import argrelmin
 
 from .__init__ import __maintainers__, __pipeline_version__, __version__
 from ._shared.types import PathLike
@@ -34,7 +34,6 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 from keras.layers import Layer
 
-
 #####################################################################
 # CUSTOM LAYERS - GROUP NORMALIZATION
 #####################################################################
@@ -43,138 +42,138 @@ from keras.layers import Layer
 class GroupNormalization3D(Layer):
     """
     Group Normalization for 3D data.
-    
+
     Normalizes features within groups, making the model invariant to:
     - Different imaging power levels
     - Batch composition
     - Per-sample intensity variations
-    
+
     This is CRITICAL for generalization across datasets with different
     acquisition settings.
-    
+
     Args:
         groups: Number of groups to split channels into
         epsilon: Small constant for numerical stability
         center: If True, add learned offset (beta)
         scale: If True, add learned scale (gamma)
     """
-    
+
     def __init__(self, groups=8, epsilon=1e-5, center=True, scale=True, **kwargs):
         super().__init__(**kwargs)
         self.groups = groups
         self.epsilon = epsilon
         self.center = center
         self.scale = scale
-        
+
     def build(self, input_shape):
         # Input shape: (batch, depth, height, width, channels)
         self.channels = input_shape[-1]
-        
+
         if self.channels % self.groups != 0:
             raise ValueError(
-                f'Number of channels ({self.channels}) must be divisible by '
-                f'number of groups ({self.groups})'
+                f"Number of channels ({self.channels}) must be divisible by "
+                f"number of groups ({self.groups})"
             )
-        
+
         shape = (self.channels,)
-        
+
         if self.scale:
             self.gamma = self.add_weight(
-                name='gamma',
-                shape=shape,
-                initializer='ones',
-                trainable=True
+                name="gamma", shape=shape, initializer="ones", trainable=True
             )
         else:
             self.gamma = None
-            
+
         if self.center:
             self.beta = self.add_weight(
-                name='beta',
-                shape=shape,
-                initializer='zeros',
-                trainable=True
+                name="beta", shape=shape, initializer="zeros", trainable=True
             )
         else:
             self.beta = None
-            
+
         super().build(input_shape)
-        
+
     def call(self, inputs):
         # Input shape: (N, D, H, W, C)
         input_shape = ops.shape(inputs)
         batch_size = input_shape[0]
-        
+
         # Reshape to (N, D, H, W, groups, C // groups)
         x = ops.reshape(
             inputs,
-            [batch_size, input_shape[1], input_shape[2], input_shape[3], 
-             self.groups, self.channels // self.groups]
+            [
+                batch_size,
+                input_shape[1],
+                input_shape[2],
+                input_shape[3],
+                self.groups,
+                self.channels // self.groups,
+            ],
         )
-        
+
         # Compute mean and variance over spatial dims and channels within each group
         # Axis: (1, 2, 3, 5) = (D, H, W, channels_per_group)
         mean = ops.mean(x, axis=[1, 2, 3, 5], keepdims=True)
         variance = ops.var(x, axis=[1, 2, 3, 5], keepdims=True)
-        
+
         # Normalize
         x = (x - mean) / ops.sqrt(variance + self.epsilon)
-        
+
         # Reshape back to (N, D, H, W, C)
         x = ops.reshape(x, input_shape)
-        
+
         # Apply scale and shift
         if self.scale:
             x = x * self.gamma
         if self.center:
             x = x + self.beta
-            
+
         return x
-    
+
     def compute_output_shape(self, input_shape):
         return input_shape
-    
+
     def get_config(self):
         config = super().get_config()
-        config.update({
-            'groups': self.groups,
-            'epsilon': self.epsilon,
-            'center': self.center,
-            'scale': self.scale,
-        })
+        config.update(
+            {
+                "groups": self.groups,
+                "epsilon": self.epsilon,
+                "center": self.center,
+                "scale": self.scale,
+            }
+        )
         return config
-
 
 @keras.saving.register_keras_serializable(package="Custom")
 class ReduceMean3D(Layer):
     """Reduce mean along channel axis - replaces Lambda layer."""
-    
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-    
+
     def call(self, inputs, mask=None):
         return ops.mean(inputs, axis=-1, keepdims=True)
-    
+
     def compute_output_shape(self, input_shape):
         return input_shape[:-1] + (1,)
-    
+
     def get_config(self):
         return super().get_config()
-
 
 @keras.saving.register_keras_serializable(package="Custom")
 class ReduceMax3D(Layer):
     """Reduce max along channel axis - replaces Lambda layer."""
-    
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-    
+
     def call(self, inputs, mask=None):
         return ops.max(inputs, axis=-1, keepdims=True)
-    
+
     def compute_output_shape(self, input_shape):
         return input_shape[:-1] + (1,)
-    
+
     def get_config(self):
         return super().get_config()
 
@@ -188,41 +187,42 @@ class BinaryFocalLoss(keras.losses.Loss):
     Binary Focal Loss as a proper Keras Loss class.
     Fully serializable - fixes the functools.partial error.
     """
-    
+
     def __init__(self, gamma=2.0, alpha=0.25, **kwargs):
         super().__init__(**kwargs)
         self.gamma = gamma
         self.alpha = alpha
-    
+
     def call(self, y_true, y_pred):
         """Compute binary focal loss."""
         y_pred = ops.cast(y_pred, "float32")
         y_true = ops.cast(y_true, "float32")
-        
+
         epsilon = keras.backend.epsilon()
         y_pred = ops.clip(y_pred, epsilon, 1.0 - epsilon)
-        
+
         # Binary cross entropy
         bce = -(y_true * ops.log(y_pred) + (1 - y_true) * ops.log(1 - y_pred))
-        
+
         # Focal weight: (1 - pt)^gamma
         pt = y_true * y_pred + (1 - y_true) * (1 - y_pred)
         focal_weight = ops.power(1.0 - pt, self.gamma)
-        
+
         # Alpha balancing
         alpha_weight = y_true * self.alpha + (1 - y_true) * (1 - self.alpha)
-        
+
         return focal_weight * alpha_weight * bce
-    
+
     def get_config(self):
         """Return config for serialization."""
         config = super().get_config()
-        config.update({
-            'gamma': self.gamma,
-            'alpha': self.alpha,
-        })
+        config.update(
+            {
+                "gamma": self.gamma,
+                "alpha": self.alpha,
+            }
+        )
         return config
-
 
 @keras.saving.register_keras_serializable(package="Custom")
 class CategoricalFocalLoss(keras.losses.Loss):
@@ -230,30 +230,30 @@ class CategoricalFocalLoss(keras.losses.Loss):
     Categorical Focal Loss as a proper Keras Loss class.
     Fully serializable - fixes the functools.partial error.
     """
-    
+
     def __init__(self, gamma=2.0, alpha=0.25, **kwargs):
         super().__init__(**kwargs)
         self.gamma = gamma
         self.alpha = alpha
-    
+
     def call(self, y_true, y_pred):
         """Compute categorical focal loss."""
         y_true = ops.cast(y_true, "float32")
         y_pred = ops.cast(y_pred, "float32")
-        
+
         epsilon = keras.backend.epsilon()
         y_pred = ops.clip(y_pred, epsilon, 1.0 - epsilon)
-        
+
         # Cross entropy
         ce = -y_true * ops.log(y_pred)
-        
+
         # pt
         pt = ops.sum(y_true * y_pred, axis=-1, keepdims=True)
-        
+
         # Focal weight
         focal_weight = ops.power(1.0 - pt, self.gamma)
         loss = focal_weight * ce
-        
+
         # Alpha weighting
         if isinstance(self.alpha, (list, tuple)):
             alpha_tensor = ops.convert_to_tensor(self.alpha, dtype="float32")
@@ -261,16 +261,18 @@ class CategoricalFocalLoss(keras.losses.Loss):
             loss = alpha_weight * loss
         else:
             loss = self.alpha * loss
-        
+
         return ops.sum(loss, axis=-1)
-    
+
     def get_config(self):
         """Return config for serialization."""
         config = super().get_config()
-        config.update({
-            'gamma': self.gamma,
-            'alpha': self.alpha,
-        })
+        config.update(
+            {
+                "gamma": self.gamma,
+                "alpha": self.alpha,
+            }
+        )
         return config
 
 
@@ -524,21 +526,23 @@ def cell_classification(
     if model_config is None:
         raise ValueError(f"Please, provide a model configuration: {smartspim_config}")
 
-    if 'normalization' in model_config['metadata'].keys():
+    if "normalization" in model_config["metadata"].keys():
         standardize = True
         try:
-            norm_type = model_config['metadata']['normalization']['type']
+            norm_type = model_config["metadata"]["normalization"]["type"]
         except:
-            norm_type = 'featurewise'
-        
-        if norm_type == 'percentile':
-            p_range = model_config['metadata']['normalization']['range']
+            norm_type = "featurewise"
+
+        if norm_type == "percentile":
+            p_range = model_config["metadata"]["normalization"]["range"]
         else:
             p_range = []
-            
-        means = model_config['metadata']['normalization']['means']
-        standard_deviations = model_config['metadata']['normalization']['standard_deviations']
-        
+
+        means = model_config["metadata"]["normalization"]["means"]
+        standard_deviations = model_config["metadata"]["normalization"][
+            "standard_deviations"
+        ]
+
         logger.info(f"Model normalization type: {norm_type}")
         logger.info(f"Model means being used: {means}")
         logger.info(f"Model STDs being used: {standard_deviations}")
@@ -701,16 +705,18 @@ def cell_classification(
 
             if standardize:
                 for i in range(2):
-                    if norm_type == 'featurewise':
+                    if norm_type == "featurewise":
                         blocks_to_classify[:, :, :, :, i] -= means[i]
-                        blocks_to_classify[:, :, :, :, i] /= (standard_deviations[i] + 1e-7)
-                    elif norm_type == 'percentile':
+                        blocks_to_classify[:, :, :, :, i] /= (
+                            standard_deviations[i] + 1e-7
+                        )
+                    elif norm_type == "percentile":
                         for batch_idx in range(blocks_to_classify.shape[0]):
                             sample = blocks_to_classify[batch_idx, :, :, :, i]
-            
+
                             # Compute percentiles for this individual sample
                             p_low, p_high = np.percentile(sample, p_range)
-            
+
                             # Normalize to [0, 1] range
                             if p_high > p_low:
                                 sample_norm = (sample - p_low) / (p_high - p_low)
@@ -718,7 +724,7 @@ def cell_classification(
                             else:
                                 # Edge case: uniform patch
                                 sample_norm = np.ones_like(sample) * 0.5
-            
+
                             blocks_to_classify[batch_idx, :, :, :, i] = sample_norm
 
                 logger.info(
@@ -735,8 +741,7 @@ def cell_classification(
                     f"Normalized background STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
                 )
 
-            predictions_raw = model.predict(blocks_to_classify, batch_size = 1024)
-
+            predictions_raw = model.predict(blocks_to_classify, batch_size=1024)
 
             if predictions_raw.shape[0] != blocks_to_classify.shape[0]:
                 error = (
@@ -747,7 +752,6 @@ def cell_classification(
 
             cell_likelihood = []
             for idx, proposal in enumerate(picked_proposals):
-
                 cell_z, cell_y, cell_x = upsample_position(
                     proposal[:3], downsample_factor=downsample
                 )
@@ -811,16 +815,16 @@ def cell_classification(
 
         if standardize:
             for i in range(2):
-                if norm_type == 'featurewise':
+                if norm_type == "featurewise":
                     blocks_to_classify[:, :, :, :, i] -= means[i]
-                    blocks_to_classify[:, :, :, :, i] /= (standard_deviations[i] + 1e-7)
-                elif norm_type == 'percentile':
+                    blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
+                elif norm_type == "percentile":
                     for batch_idx in range(blocks_to_classify.shape[0]):
                         sample = blocks_to_classify[batch_idx, :, :, :, i]
-        
+
                         # Compute percentiles for this individual sample
                         p_low, p_high = np.percentile(sample, p_range)
-        
+
                         # Normalize to [0, 1] range
                         if p_high > p_low:
                             sample_norm = (sample - p_low) / (p_high - p_low)
@@ -828,11 +832,10 @@ def cell_classification(
                         else:
                             # Edge case: uniform patch
                             sample_norm = np.ones_like(sample) * 0.5
-            
+
                         blocks_to_classify[batch_idx, :, :, :, i] = sample_norm
 
-        predictions_raw = model.predict(blocks_to_classify, batch_size = 1024)
-
+        predictions_raw = model.predict(blocks_to_classify, batch_size=1024)
 
         if predictions_raw.shape[0] != blocks_to_classify.shape[0]:
             error = (
@@ -843,7 +846,6 @@ def cell_classification(
 
         cell_likelihood = []
         for idx, proposal in enumerate(picked_proposals):
-
             cell_z, cell_y, cell_x = upsample_position(
                 proposal[:3], downsample_factor=downsample
             )
@@ -916,16 +918,17 @@ def cell_classification(
 
     return str(image_path), data_processes
 
+
 def calculate_threshold(
     df: pd.DataFrame,
     save_path: PathLike,
     logger: logging.logger,
-    bins: int = 256, 
-    min_catch: float = 0.800
+    bins: int = 256,
+    min_catch: float = 0.800,
 ):
-    """ Calculates the class decision boundary. If no boundary is found it will
+    """Calculates the class decision boundary. If no boundary is found it will
     default to 0.8 which is where we often see the boundary
-    
+
     Parameters
     ----------
     df: pd.DataFrame
@@ -937,7 +940,7 @@ def calculate_threshold(
 
     bins: int
         number of binds of histogram for calculating threshold. Default = 256
-        
+
     min_catch: float
         if no local minima is found (i.e. monotonic) provide this as the
         theshold. This is possible in cases where very few cells are labeled.
@@ -949,11 +952,10 @@ def calculate_threshold(
             Dataframe with Class assignment for cells based on the calculated
             threshold
     """
-    
-    data = df['Cell Likelihood'].values
+
+    data = df["Cell Likelihood"].values
     counts, bins, _ = plt.histogram(data, bins=bins)
 
-   
     smoothed_counts = gaussian_filter1d(counts, sigma=3)
     min_indices = argrelmin(smoothed_counts)[0]
 
@@ -964,31 +966,26 @@ def calculate_threshold(
     else:
         min_position = min_catch
         logger.info(f"No minima detected. setting minimum at x ≈ {min_position:.3f}")
-    
+
     output_png = os.path.join(save_path, "proposals/threshold_identification.png")
-    
+
     # Plot to visualize
     plt.figure()
     bin_centers = (bins[:-1] + bins[1:]) / 2
-    plt.plot(bin_centers, counts, alpha=0.5, label='Original')
-    plt.plot(bin_centers, smoothed_counts, label='Smoothed')
-    plt.axvline(min_position, color='r', linestyle='--', label=f'Min at {min_position:.3f}')
-    plt.yscale('log')
+    plt.plot(bin_centers, counts, alpha=0.5, label="Original")
+    plt.plot(bin_centers, smoothed_counts, label="Smoothed")
+    plt.axvline(
+        min_position, color="r", linestyle="--", label=f"Min at {min_position:.3f}"
+    )
+    plt.yscale("log")
     plt.legend()
-    plt.savefig(
-        output_png,
-        dpi=300, 
-        bbox_inches='tight'
-    )
+    plt.savefig(output_png, dpi=300, bbox_inches="tight")
     plt.close()
-    
-    df.insert(
-        3, 
-        "Class",
-        (df['Cell Likelihood'] >= min_position).astype(int)
-    )
-    
+
+    df.insert(3, "Class", (df["Cell Likelihood"] >= min_position).astype(int))
+
     return df
+
 
 def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
     """
@@ -1018,7 +1015,7 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     df = pd.concat(cells)
     df = df.reset_index(drop=True)
     df = calculate_threshold(df, save_path, logger)
-    
+
     output_csv = os.path.join(save_path, "proposals/cell_likelihoods.csv")
 
     df.to_csv(output_csv)
