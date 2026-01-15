@@ -4,7 +4,7 @@ FROM $REGISTRY_HOST/codeocean/pytorch-tensorflow-jax:2.1
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN conda create -n cell_class python=3.9
+RUN conda create -n cell_class python=3.9 -y
 
 # Make RUN commands use the new environment:
 SHELL ["conda", "run", "-n", "cell_class", "/bin/bash", "-c"]
@@ -16,7 +16,12 @@ COPY git-askpass /
 RUN apt-get update
 RUN apt-get -y install gcc g++ libcublas-12-0 libpcre3
 
-RUN conda install pytorch torchvision pytorch-cuda=11.8 -c pytorch -c nvidia
+RUN pip install --no-cache-dir \
+    torch==2.1.0 \
+    torchvision==0.16.0 \
+    --index-url https://download.pytorch.org/whl/cu118
+
+#RUN conda install pytorch torchvision pytorch-cuda=11.8 -c pytorch -c nvidia
 
 RUN pip install -U --no-cache-dir \
     aind-data-schema==1.0.0 \

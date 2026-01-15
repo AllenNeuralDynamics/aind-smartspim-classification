@@ -922,7 +922,7 @@ def cell_classification(
 def calculate_threshold(
     df: pd.DataFrame,
     save_path: PathLike,
-    logger: logging.logger,
+    logger: logging.Logger,
     bins: int = 256,
     min_catch: float = 0.800,
 ):
