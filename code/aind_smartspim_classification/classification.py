@@ -954,7 +954,7 @@ def calculate_threshold(
     """
 
     data = df["Cell Likelihood"].values
-    counts, bins, _ = plt.histogram(data, bins=bins)
+    counts, bins, _ = plt.hist(data, bins=bins)
 
     smoothed_counts = gaussian_filter1d(counts, sigma=3)
     min_indices = argrelmin(smoothed_counts)[0]
