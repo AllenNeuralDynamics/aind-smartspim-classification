@@ -16,6 +16,8 @@ COPY git-askpass /
 RUN apt-get update
 RUN apt-get -y install gcc g++ libcublas-12-0 libpcre3
 
+RUN pip install --no-cache-dir "numpy<2.0"
+
 RUN pip install --no-cache-dir \
     torch==2.1.0 \
     torchvision==0.16.0 \
