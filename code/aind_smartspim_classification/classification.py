@@ -574,7 +574,7 @@ def cell_classification(
         np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
     )
     # Estimate the number of blocks that fit within 80% memory
-    max_blocks = 100,000 #target_memory // block_size_bytes
+    max_blocks = 100000 #target_memory // block_size_bytes
     logger.info(f"Maximum blocks: {max_blocks}")
 
     curr_blocks = 0
