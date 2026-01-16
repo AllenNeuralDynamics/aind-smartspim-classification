@@ -574,7 +574,7 @@ def cell_classification(
         np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
     )
     # Estimate the number of blocks that fit within 80% memory
-    max_blocks = target_memory // block_size_bytes
+    max_blocks = 100,000 #target_memory // block_size_bytes
     logger.info(f"Maximum blocks: {max_blocks}")
 
     curr_blocks = 0
@@ -741,7 +741,7 @@ def cell_classification(
                     f"Normalized background STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
                 )
 
-            predictions_raw = model.predict(blocks_to_classify, batch_size=512)
+            predictions_raw = model.predict(blocks_to_classify, batch_size=1024)
 
             if predictions_raw.shape[0] != blocks_to_classify.shape[0]:
                 error = (
@@ -835,7 +835,7 @@ def cell_classification(
 
                         blocks_to_classify[batch_idx, :, :, :, i] = sample_norm
 
-        predictions_raw = model.predict(blocks_to_classify, batch_size=512)
+        predictions_raw = model.predict(blocks_to_classify, batch_size=1024)
 
         if predictions_raw.shape[0] != blocks_to_classify.shape[0]:
             error = (
