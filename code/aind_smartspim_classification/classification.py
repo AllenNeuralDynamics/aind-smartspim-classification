@@ -741,7 +741,7 @@ def cell_classification(
                     f"Normalized background STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
                 )
 
-            predictions_raw = model.predict(blocks_to_classify, batch_size=1024)
+            predictions_raw = model.predict(blocks_to_classify, batch_size=512)
 
             if predictions_raw.shape[0] != blocks_to_classify.shape[0]:
                 error = (
@@ -835,7 +835,7 @@ def cell_classification(
 
                         blocks_to_classify[batch_idx, :, :, :, i] = sample_norm
 
-        predictions_raw = model.predict(blocks_to_classify, batch_size=1024)
+        predictions_raw = model.predict(blocks_to_classify, batch_size=512)
 
         if predictions_raw.shape[0] != blocks_to_classify.shape[0]:
             error = (
