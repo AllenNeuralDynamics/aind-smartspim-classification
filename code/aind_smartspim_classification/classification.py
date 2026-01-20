@@ -1126,7 +1126,7 @@ def generate_neuroglancer_link(
                 "source": f"zarr://s3://{bucket}/{smartspim_config['name']}/image_tile_fusing/OMEZarr/{smartspim_config['channel']}.zarr",
                 "type": "image",
                 "tab": "rendering",
-                "shader": f'#uicontrol vec3 color color(default="{signal_hex_code}")\n#uicontrol invlerp normalized\nvoid main() {\nemitRGB(color * normalized());\n}',
+                "shader": f'#uicontrol vec3 color color(default="{signal_hex_code}")\n#uicontrol invlerp normalized\nvoid main() {{\nemitRGB(color * normalized());\n}}',
                 "shaderControls": {
                     "normalized": {
                         "range": [0, dynamic_range[0][0]],
