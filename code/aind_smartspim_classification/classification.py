@@ -1052,10 +1052,12 @@ def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
         "Noncell Counts": len(df_non_cells),
         "Noncell Likelihood Mean": df_non_cells["Cell Likelihood"].mean(),
         "Noncell Likelihood STD": df_non_cells["Cell Likelihood"].std(),
+        "Classification Threshold": 
     }
 
     df_out = pd.DataFrame(likelihood_metrics, index=["Metrics"])
     df_out.to_csv(os.path.join(save_path, "cell_likelihood_metrics.csv"))
+
 
 
 def generate_neuroglancer_link(
@@ -1106,6 +1108,12 @@ def generate_neuroglancer_link(
     else:
         crossSectionOrientation = [np.cos(np.pi / 4), 0.0, 0.0, np.cos(np.pi / 4)]
 
+    bkg_channel = os.path.basename(smartspim_config['background_channel']).split('.')[0]
+
+    signal_ch = int(smartspim_config['channel'].split('_')[-1])
+    signal_hex_val = wavelength_to_hex_alternate(channel)
+    signal_hex_code = f"#{str(hex(hex_val))[2:]}"
+
     json_state = {
         "ng_link": f"{ng_configs['base_url']}{ng_path}",
         "title": smartspim_config["channel"],
@@ -1118,14 +1126,27 @@ def generate_neuroglancer_link(
                 "source": f"zarr://s3://{bucket}/{smartspim_config['name']}/image_tile_fusing/OMEZarr/{smartspim_config['channel']}.zarr",
                 "type": "image",
                 "tab": "rendering",
-                "shader": '#uicontrol vec3 color color(default="#ffffff")\n#uicontrol invlerp normalized\nvoid main() {\nemitRGB(color * normalized());\n}',
+                "shader": f'#uicontrol vec3 color color(default="{signal_hex_code}")\n#uicontrol invlerp normalized\nvoid main() {\nemitRGB(color * normalized());\n}',
                 "shaderControls": {
                     "normalized": {
-                        "range": [0, dynamic_range[0]],
-                        "window": [0, dynamic_range[1]],
+                        "range": [0, dynamic_range[0][0]],
+                        "window": [0, dynamic_range[0][1]],
                     },
                 },
                 "name": f"Channel: {smartspim_config['channel']}",
+            },
+            {
+                "source": f"zarr://s3://{bucket}/{smartspim_config['name']}/image_tile_fusing/OMEZarr/{bkg_channel}.zarr",
+                "type": "image",
+                "tab": "rendering",
+                "shader": '#uicontrol vec3 color color(default="#ffffff")\n#uicontrol invlerp normalized\nvoid main() {\nemitRGB(color * normalized());\n}',
+                "shaderControls": {
+                    "normalized": {
+                        "range": [0, dynamic_range[1][0]],
+                        "window": [0, dynamic_range[1][1]],
+                    },
+                },
+                "name": f"Background Channel: {bkg_channel}",
             },
             {
                 "source": f"precomputed://s3://{bucket}/{smartspim_config['name']}/image_cell_segmentation/{smartspim_config['channel']}/visualization/detected_precomputed",
@@ -1222,10 +1243,20 @@ def main(
         f"{smartspim_config['input_data']}/{smartspim_config['input_channel']}"
     )
 
-    dynamic_range = utils.calculate_dynamic_range(image_path, 99, 3)
+    background_path = os.path.abspath(
+        f"{smartspim_config['input_data']}/{smartspim_config['background_channel']}"
+    )
+
+    dynamic_range_signal = utils.calculate_dynamic_range(image_path, 99, 3)
+    dynamic_range_bkg = utils.calculate_dynamic_range(background_path, 99, 3)
+
+    dynamic_ranges = [
+        dynamic_range_signal,
+        dynamic_range_bkg
+    ]
 
     generate_neuroglancer_link(
-        cells_df, neuroglancer_config, smartspim_config, dynamic_range, logger
+        cells_df, neuroglancer_config, smartspim_config, dynamic_ranges, logger
     )
 
     utils.generate_processing(

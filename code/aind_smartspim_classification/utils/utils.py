@@ -292,6 +292,48 @@ def volume_orientation(acquisition_params: dict):
 
     return orientation
 
+def wavelength_to_hex_alternate(wavelength: int) -> int:
+    """
+    Converts wavelengths to hex value, taking fpbase.org spectra viewer
+    as a guide.
+    Fluorescent proteins querried:
+    mTFP1,
+    EGFP,
+    SYFP2,
+    mbanana,
+    morange,
+    mtomato,
+    mcherry,
+    mraspberry,
+    mplum
+
+    Parameters
+    ------------------------
+    wavelength: int
+        Integer value representing wavelength.
+
+    Returns
+    ------------------------
+    int:
+        Hex value color.
+    """
+
+    color_map = {
+        500: 0x61ABFD,  # RUDDY BLUE, mTFP/mTurquoise
+        530: 0x92FF42,  # CHARTREUSE,   EGFP
+        540: 0xE4FE41,  # CHARTREUSE, SYFP2
+        560: 0xF3D038,  # MUSTARD, mBanana
+        580: 0xEAB032,  # XANTHOUS, mOrange
+        600: 0xF15F22,  # GIANTS ORANGE, tdTomato/mScarlet
+        630: 0xED1C24,  # RED, mCherry
+        680: 0xC51E1F,  # FIRE ENGINE RED, mRaspberry
+        700: 0xA81F1F,  # FIRE BRICK, mPlum
+    }
+
+    for ub, hex_val in color_map.items():
+        if wavelength <= ub:  # Inclusive
+            return hex_val
+    return hex_val  # hex_val is set to the last color in for loop
 
 def calculate_dynamic_range(image_path: PathLike, percentile: 99, level: 3):
     """
