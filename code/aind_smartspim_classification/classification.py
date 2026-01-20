@@ -984,7 +984,7 @@ def calculate_threshold(
 
     df.insert(3, "Class", (df["Cell Likelihood"] >= min_position).astype(int))
 
-    return df
+    return df, min_position
 
 
 def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
@@ -1014,7 +1014,7 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     # save list of all cells
     df = pd.concat(cells)
     df = df.reset_index(drop=True)
-    df = calculate_threshold(df, save_path, logger)
+    df, threshold = calculate_threshold(df, save_path, logger)
 
     output_csv = os.path.join(save_path, "proposals/cell_likelihoods.csv")
 
@@ -1028,10 +1028,10 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     output_csv = os.path.join(save_path, "detected_cells.csv")
     df_cells.to_csv(output_csv)
 
-    return output_csv, df_cells
+    return output_csv, df_cells, threshold
 
 
-def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
+def cumulative_likelihoods(threshold: float, save_path: PathLike, logger: logging.Logger):
     """
     Takes the cell_likelihoods.csv and creates a cumulative metric
     """
@@ -1052,7 +1052,7 @@ def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
         "Noncell Counts": len(df_non_cells),
         "Noncell Likelihood Mean": df_non_cells["Cell Likelihood"].mean(),
         "Noncell Likelihood STD": df_non_cells["Cell Likelihood"].std(),
-        "Classification Threshold": 
+        "Classification Threshold": threshold
     }
 
     df_out = pd.DataFrame(likelihood_metrics, index=["Metrics"])
@@ -1232,12 +1232,12 @@ def main(
 
     # merge block .xmls and .csvs into single file
     # merge_xml(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
-    classified_cells_path, cells_df = merge_csv(
+    classified_cells_path, cells_df, threshold = merge_csv(
         smartspim_config["metadata_path"], smartspim_config["save_path"], logger
     )
 
     # generate cumulative metrics
-    cumulative_likelihoods(smartspim_config["save_path"], logger)
+    cumulative_likelihoods(threshold, smartspim_config["save_path"], logger)
 
     image_path = os.path.abspath(
         f"{smartspim_config['input_data']}/{smartspim_config['input_channel']}"
