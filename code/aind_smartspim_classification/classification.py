@@ -1112,7 +1112,7 @@ def generate_neuroglancer_link(
 
     signal_ch = int(smartspim_config['channel'].split('_')[-1])
     signal_hex_val = utils.wavelength_to_hex_alternate(signal_ch)
-    signal_hex_code = f"#{str(hex(hex_val))[2:]}"
+    signal_hex_code = f"#{str(hex(signal_hex_val))[2:]}"
 
     json_state = {
         "ng_link": f"{ng_configs['base_url']}{ng_path}",
