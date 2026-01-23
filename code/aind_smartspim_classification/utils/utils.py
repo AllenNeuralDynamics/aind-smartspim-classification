@@ -292,6 +292,7 @@ def volume_orientation(acquisition_params: dict):
 
     return orientation
 
+
 def wavelength_to_hex_alternate(wavelength: int) -> int:
     """
     Converts wavelengths to hex value, taking fpbase.org spectra viewer
@@ -334,6 +335,7 @@ def wavelength_to_hex_alternate(wavelength: int) -> int:
         if wavelength <= ub:  # Inclusive
             return hex_val
     return hex_val  # hex_val is set to the last color in for loop
+
 
 def calculate_dynamic_range(image_path: PathLike, percentile: 99, level: 3):
     """

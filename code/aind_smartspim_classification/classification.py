@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import keras
-import keras.ops as ops
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -28,256 +27,18 @@ from scipy.signal import argrelmin
 
 from .__init__ import __maintainers__, __pipeline_version__, __version__
 from ._shared.types import PathLike
+from .model.layers import GroupNormalization3D, ReduceMax3D, ReduceMean3D
+from .model.losses import BinaryFocalLoss, CategoricalFocalLoss
 from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-from keras.layers import Layer
-
-#####################################################################
-# CUSTOM LAYERS - GROUP NORMALIZATION
-#####################################################################
-
-@keras.saving.register_keras_serializable(package="Custom")
-class GroupNormalization3D(Layer):
-    """
-    Group Normalization for 3D data.
-
-    Normalizes features within groups, making the model invariant to:
-    - Different imaging power levels
-    - Batch composition
-    - Per-sample intensity variations
-
-    This is CRITICAL for generalization across datasets with different
-    acquisition settings.
-
-    Args:
-        groups: Number of groups to split channels into
-        epsilon: Small constant for numerical stability
-        center: If True, add learned offset (beta)
-        scale: If True, add learned scale (gamma)
-    """
-
-    def __init__(self, groups=8, epsilon=1e-5, center=True, scale=True, **kwargs):
-        super().__init__(**kwargs)
-        self.groups = groups
-        self.epsilon = epsilon
-        self.center = center
-        self.scale = scale
-
-    def build(self, input_shape):
-        # Input shape: (batch, depth, height, width, channels)
-        self.channels = input_shape[-1]
-
-        if self.channels % self.groups != 0:
-            raise ValueError(
-                f"Number of channels ({self.channels}) must be divisible by "
-                f"number of groups ({self.groups})"
-            )
-
-        shape = (self.channels,)
-
-        if self.scale:
-            self.gamma = self.add_weight(
-                name="gamma", shape=shape, initializer="ones", trainable=True
-            )
-        else:
-            self.gamma = None
-
-        if self.center:
-            self.beta = self.add_weight(
-                name="beta", shape=shape, initializer="zeros", trainable=True
-            )
-        else:
-            self.beta = None
-
-        super().build(input_shape)
-
-    def call(self, inputs):
-        # Input shape: (N, D, H, W, C)
-        input_shape = ops.shape(inputs)
-        batch_size = input_shape[0]
-
-        # Reshape to (N, D, H, W, groups, C // groups)
-        x = ops.reshape(
-            inputs,
-            [
-                batch_size,
-                input_shape[1],
-                input_shape[2],
-                input_shape[3],
-                self.groups,
-                self.channels // self.groups,
-            ],
-        )
-
-        # Compute mean and variance over spatial dims and channels within each group
-        # Axis: (1, 2, 3, 5) = (D, H, W, channels_per_group)
-        mean = ops.mean(x, axis=[1, 2, 3, 5], keepdims=True)
-        variance = ops.var(x, axis=[1, 2, 3, 5], keepdims=True)
-
-        # Normalize
-        x = (x - mean) / ops.sqrt(variance + self.epsilon)
-
-        # Reshape back to (N, D, H, W, C)
-        x = ops.reshape(x, input_shape)
-
-        # Apply scale and shift
-        if self.scale:
-            x = x * self.gamma
-        if self.center:
-            x = x + self.beta
-
-        return x
-
-    def compute_output_shape(self, input_shape):
-        return input_shape
-
-    def get_config(self):
-        config = super().get_config()
-        config.update(
-            {
-                "groups": self.groups,
-                "epsilon": self.epsilon,
-                "center": self.center,
-                "scale": self.scale,
-            }
-        )
-        return config
-
-@keras.saving.register_keras_serializable(package="Custom")
-class ReduceMean3D(Layer):
-    """Reduce mean along channel axis - replaces Lambda layer."""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def call(self, inputs, mask=None):
-        return ops.mean(inputs, axis=-1, keepdims=True)
-
-    def compute_output_shape(self, input_shape):
-        return input_shape[:-1] + (1,)
-
-    def get_config(self):
-        return super().get_config()
-
-@keras.saving.register_keras_serializable(package="Custom")
-class ReduceMax3D(Layer):
-    """Reduce max along channel axis - replaces Lambda layer."""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def call(self, inputs, mask=None):
-        return ops.max(inputs, axis=-1, keepdims=True)
-
-    def compute_output_shape(self, input_shape):
-        return input_shape[:-1] + (1,)
-
-    def get_config(self):
-        return super().get_config()
-
-# ============================================================================
-# SERIALIZABLE LOSS CLASSES (for model saving)
-# ============================================================================
-
-@keras.saving.register_keras_serializable(package="Custom")
-class BinaryFocalLoss(keras.losses.Loss):
-    """
-    Binary Focal Loss as a proper Keras Loss class.
-    Fully serializable - fixes the functools.partial error.
-    """
-
-    def __init__(self, gamma=2.0, alpha=0.25, **kwargs):
-        super().__init__(**kwargs)
-        self.gamma = gamma
-        self.alpha = alpha
-
-    def call(self, y_true, y_pred):
-        """Compute binary focal loss."""
-        y_pred = ops.cast(y_pred, "float32")
-        y_true = ops.cast(y_true, "float32")
-
-        epsilon = keras.backend.epsilon()
-        y_pred = ops.clip(y_pred, epsilon, 1.0 - epsilon)
-
-        # Binary cross entropy
-        bce = -(y_true * ops.log(y_pred) + (1 - y_true) * ops.log(1 - y_pred))
-
-        # Focal weight: (1 - pt)^gamma
-        pt = y_true * y_pred + (1 - y_true) * (1 - y_pred)
-        focal_weight = ops.power(1.0 - pt, self.gamma)
-
-        # Alpha balancing
-        alpha_weight = y_true * self.alpha + (1 - y_true) * (1 - self.alpha)
-
-        return focal_weight * alpha_weight * bce
-
-    def get_config(self):
-        """Return config for serialization."""
-        config = super().get_config()
-        config.update(
-            {
-                "gamma": self.gamma,
-                "alpha": self.alpha,
-            }
-        )
-        return config
-
-@keras.saving.register_keras_serializable(package="Custom")
-class CategoricalFocalLoss(keras.losses.Loss):
-    """
-    Categorical Focal Loss as a proper Keras Loss class.
-    Fully serializable - fixes the functools.partial error.
-    """
-
-    def __init__(self, gamma=2.0, alpha=0.25, **kwargs):
-        super().__init__(**kwargs)
-        self.gamma = gamma
-        self.alpha = alpha
-
-    def call(self, y_true, y_pred):
-        """Compute categorical focal loss."""
-        y_true = ops.cast(y_true, "float32")
-        y_pred = ops.cast(y_pred, "float32")
-
-        epsilon = keras.backend.epsilon()
-        y_pred = ops.clip(y_pred, epsilon, 1.0 - epsilon)
-
-        # Cross entropy
-        ce = -y_true * ops.log(y_pred)
-
-        # pt
-        pt = ops.sum(y_true * y_pred, axis=-1, keepdims=True)
-
-        # Focal weight
-        focal_weight = ops.power(1.0 - pt, self.gamma)
-        loss = focal_weight * ce
-
-        # Alpha weighting
-        if isinstance(self.alpha, (list, tuple)):
-            alpha_tensor = ops.convert_to_tensor(self.alpha, dtype="float32")
-            alpha_weight = y_true * alpha_tensor
-            loss = alpha_weight * loss
-        else:
-            loss = self.alpha * loss
-
-        return ops.sum(loss, axis=-1)
-
-    def get_config(self):
-        """Return config for serialization."""
-        config = super().get_config()
-        config.update(
-            {
-                "gamma": self.gamma,
-                "alpha": self.alpha,
-            }
-        )
-        return config
-
 
 def extract_centered_3d_block(
-    big_block: np.array, center: Tuple, size: Tuple, pad_value: Optional[int] = 0
+    big_block: np.array,
+    center: Tuple[int, int, int],
+    size: Tuple[int, int, int],
+    pad_value: Optional[int] = 0,
 ):
     """
     Extract a centered 3D block around a specified center and pad it if needed.
@@ -416,7 +177,8 @@ def cell_classification(
         Logging object
 
     cell_proposals: pd.DataFrame
-        Proposals in the whole brain. Required columns: ['Z', 'Y', 'X', 'fg', 'bg']
+        Proposals in the whole brain.
+        Required columns: ['Z', 'Y', 'X', 'fg', 'bg']
 
     prediction_chunksize: Optional[Tuple]
         Chunksize that will be used to run predictions on
@@ -574,7 +336,7 @@ def cell_classification(
         np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
     )
     # Estimate the number of blocks that fit within 80% memory
-    max_blocks = 100000 #target_memory // block_size_bytes
+    max_blocks = 100000  # target_memory // block_size_bytes
     logger.info(f"Maximum blocks: {max_blocks}")
 
     curr_blocks = 0
@@ -1031,7 +793,9 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     return output_csv, df_cells, threshold
 
 
-def cumulative_likelihoods(threshold: float, save_path: PathLike, logger: logging.Logger):
+def cumulative_likelihoods(
+    threshold: float, save_path: PathLike, logger: logging.Logger
+):
     """
     Takes the cell_likelihoods.csv and creates a cumulative metric
     """
@@ -1052,12 +816,11 @@ def cumulative_likelihoods(threshold: float, save_path: PathLike, logger: loggin
         "Noncell Counts": len(df_non_cells),
         "Noncell Likelihood Mean": df_non_cells["Cell Likelihood"].mean(),
         "Noncell Likelihood STD": df_non_cells["Cell Likelihood"].std(),
-        "Classification Threshold": threshold
+        "Classification Threshold": threshold,
     }
 
     df_out = pd.DataFrame(likelihood_metrics, index=["Metrics"])
     df_out.to_csv(os.path.join(save_path, "cell_likelihood_metrics.csv"))
-
 
 
 def generate_neuroglancer_link(
@@ -1108,9 +871,9 @@ def generate_neuroglancer_link(
     else:
         crossSectionOrientation = [np.cos(np.pi / 4), 0.0, 0.0, np.cos(np.pi / 4)]
 
-    bkg_channel = os.path.basename(smartspim_config['background_channel']).split('.')[0]
+    bkg_channel = os.path.basename(smartspim_config["background_channel"]).split(".")[0]
 
-    signal_ch = int(smartspim_config['channel'].split('_')[-1])
+    signal_ch = int(smartspim_config["channel"].split("_")[-1])
     signal_hex_val = utils.wavelength_to_hex_alternate(signal_ch)
     signal_hex_code = f"#{str(hex(signal_hex_val))[2:]}"
 
@@ -1250,10 +1013,7 @@ def main(
     dynamic_range_signal = utils.calculate_dynamic_range(image_path, 99, 3)
     dynamic_range_bkg = utils.calculate_dynamic_range(background_path, 99, 3)
 
-    dynamic_ranges = [
-        dynamic_range_signal,
-        dynamic_range_bkg
-    ]
+    dynamic_ranges = [dynamic_range_signal, dynamic_range_bkg]
 
     generate_neuroglancer_link(
         cells_df, neuroglancer_config, smartspim_config, dynamic_ranges, logger
