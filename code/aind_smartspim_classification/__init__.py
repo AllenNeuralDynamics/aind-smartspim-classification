@@ -19,5 +19,5 @@ __maintainer_emails__ = [
     "nicholas.lusk@alleninstitute.org",
 ]
 __title__ = "aind-smartspim-cell-proposals"
-__status__ = "Production"  # 'Production', 'Beta'
+__status__ = "Beta"  # 'Production', 'Beta'
 __pipeline_version__ = "4.0.0"
