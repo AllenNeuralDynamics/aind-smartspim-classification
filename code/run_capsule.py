@@ -303,7 +303,7 @@ def run():
     data_folder = os.path.abspath("../data")
     results_folder = os.path.abspath("../results")
     smartspim_production_models = Path(data_folder).joinpath(
-        "new_model" #"smartspim_production_models"
+        "smartspim_production_models"
     )
 
     # scratch_folder = os.path.abspath("../scratch")
@@ -354,7 +354,7 @@ def run():
 
         model_config = utils.read_json_as_dict(str(model_config_path))
         model_config["default_model"] = smartspim_production_models.joinpath(
-            "model.keras" #model_config["default_model"]
+            model_config["default_model"]
         )
 
         model_metadata = utils.read_json_as_dict(
