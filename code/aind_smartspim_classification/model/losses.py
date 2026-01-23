@@ -1,5 +1,10 @@
 """
-Seriazable loss classes for model saving
+Serializable focal loss classes for model saving.
+
+This module includes fully serializable implementations of binary and
+categorical focal loss, compatible with Keras Core (`keras.ops`) and
+registered via `keras.saving.register_keras_serializable`.
+
 """
 
 import keras
@@ -9,8 +14,21 @@ import keras.ops as ops
 @keras.saving.register_keras_serializable(package="Custom")
 class BinaryFocalLoss(keras.losses.Loss):
     """
-    Binary Focal Loss as a proper Keras Loss class.
-    Fully serializable - fixes the functools.partial error.
+    Binary focal loss.
+
+    Parameters
+    ----------
+    gamma : float, default 2.0
+        Focusing parameter. Larger values reduce the loss contribution
+        from well-classified examples: $(1 - p_t)^\gamma$.
+    alpha : float, default 0.25
+        Class balancing factor applied to positive vs negative classes.
+
+    Notes
+    -----
+    - `y_true` and `y_pred` are expected to be broadcastable to the same
+      shape. `y_pred` should be probabilities in (0, 1).
+    - Registered as a serializable custom loss for model saving/loading.
     """
 
     def __init__(self, gamma=2.0, alpha=0.25, **kwargs):
@@ -19,7 +37,21 @@ class BinaryFocalLoss(keras.losses.Loss):
         self.alpha = alpha
 
     def call(self, y_true, y_pred):
-        """Compute binary focal loss."""
+        """Compute the binary focal loss.
+
+        Parameters
+        ----------
+        y_true : Tensor
+            Binary targets. Shape broadcastable to `y_pred`.
+        y_pred : Tensor
+            Predicted probabilities in (0, 1). Shape broadcastable to `y_true`.
+
+        Returns
+        -------
+        Tensor
+            Element-wise loss values, reducible by Keras depending on the
+            configured loss reduction.
+        """
         y_pred = ops.cast(y_pred, "float32")
         y_true = ops.cast(y_true, "float32")
 
@@ -39,7 +71,7 @@ class BinaryFocalLoss(keras.losses.Loss):
         return focal_weight * alpha_weight * bce
 
     def get_config(self):
-        """Return config for serialization."""
+        """Return config for serialization (gamma and alpha)."""
         config = super().get_config()
         config.update(
             {
@@ -53,8 +85,22 @@ class BinaryFocalLoss(keras.losses.Loss):
 @keras.saving.register_keras_serializable(package="Custom")
 class CategoricalFocalLoss(keras.losses.Loss):
     """
-    Categorical Focal Loss as a proper Keras Loss class.
-    Fully serializable - fixes the functools.partial error.
+    Categorical focal loss.
+
+    Parameters
+    ----------
+    gamma : float, default 2.0
+        Focusing parameter. Larger values reduce the loss contribution
+        from well-classified examples: $(1 - p_t)^\gamma$.
+    alpha : float or sequence, default 0.25
+        Class balancing factor. If a list/tuple is provided, it should match
+        the number of classes and will be applied per-class.
+
+    Notes
+    -----
+    - `y_true` should be one-hot encoded. `y_pred` should contain
+      probabilities per class and sum to 1 across the class dimension.
+    - Registered as a serializable custom loss for model saving/loading.
     """
 
     def __init__(self, gamma=2.0, alpha=0.25, **kwargs):
@@ -63,7 +109,20 @@ class CategoricalFocalLoss(keras.losses.Loss):
         self.alpha = alpha
 
     def call(self, y_true, y_pred):
-        """Compute categorical focal loss."""
+        """Compute the categorical focal loss.
+
+        Parameters
+        ----------
+        y_true : Tensor
+            One-hot targets. Same shape as `y_pred`.
+        y_pred : Tensor
+            Predicted class probabilities in (0, 1). Same shape as `y_true`.
+
+        Returns
+        -------
+        Tensor
+            Per-example loss values reduced over the class axis.
+        """
         y_true = ops.cast(y_true, "float32")
         y_pred = ops.cast(y_pred, "float32")
 
@@ -91,7 +150,7 @@ class CategoricalFocalLoss(keras.losses.Loss):
         return ops.sum(loss, axis=-1)
 
     def get_config(self):
-        """Return config for serialization."""
+        """Return config for serialization (gamma and alpha)."""
         config = super().get_config()
         config.update(
             {
