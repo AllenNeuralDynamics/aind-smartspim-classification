@@ -1,5 +1,8 @@
 """
-Module for the classification of smartspim datasets
+Module for the classification of smartspim datasets.
+This reads a deep learning model which is in the
+aind-benchmark-data bucket trained to classify 3D
+blocks if they are cells or not.
 """
 
 import json
