@@ -683,55 +683,121 @@ def cell_classification(
 
     return str(image_path), data_processes
 
-
 def calculate_threshold(
     df: pd.DataFrame,
     save_path: PathLike,
-    logger: logging.Logger,
-    bins: int = 256,
-    min_catch: float = 0.800,
+    logger = logging.Logger,
+    n_bins: int = 256,
+    min_catch_high: float = 0.850,
+    min_catch_low: float = 0.050,
+    rise_factor: float = 2.0,
 ):
-    """Calculates the class decision boundary. If no boundary is found it will
-    default to 0.8 which is where we often see the boundary
-
+    """Calculates the class decision boundary between non-cells and cells.
+    
     Parameters
     ----------
     df: pd.DataFrame
         dataframe created from merging all of the classification block
         dataframes
+        
+    save_path: Pathlike,
+        Location to save the PNG depicting location of threshold and likelihood
+        distribution
 
     logger: logging.logger
         logging Object
 
-    bins: int
+    n_bins: int
         number of binds of histogram for calculating threshold. Default = 256
 
-    min_catch: float
-        if no local minima is found (i.e. monotonic) provide this as the
-        theshold. This is possible in cases where very few cells are labeled.
-        Default = 0.800
+    min_catch_high : float
+        Fallback threshold when absolute min is at right edge (1.0) 
+        and no meaningful valley found. Default 0.950.
+        
+    min_catch_low : float
+        Fallback threshold when absolute min is at left edge (0.0)
+        and no meaningful valley found. Default 0.050.
+        
+    rise_factor : float
+        How high the peaks for cells and non-cells need to be above the valley
+        for it to be considered meaningful. Helps to avoid wiggles in the 
+        fit being assigned as thresholds
 
     Returns
     -------
         pd.DataFrame
             Dataframe with Class assignment for cells based on the calculated
             threshold
+
+
     """
-
     data = df["Cell Likelihood"].values
-    counts, bins, _ = plt.hist(data, bins=bins)
 
+    counts, bins, _ = plt.hist(data, bins=n_bins)
     smoothed_counts = gaussian_filter1d(counts, sigma=3)
+    bin_centers = (bins[:-1] + bins[1:]) / 2
+    
     min_indices = argrelmin(smoothed_counts)[0]
+    abs_min_idx = np.argmin(smoothed_counts)
+    abs_min_position = bin_centers[abs_min_idx]
+    
+    # Check if absolute min is near a local min
+    abs_is_local = any(abs(abs_min_idx - idx) <= 2 for idx in min_indices) if len(min_indices) > 0 else False
+    
+    # Check if absolute min is at either edge
+    at_left_edge = abs_min_idx == 0
+    at_right_edge = abs_min_idx == n_bins - 1
+    
+    def is_meaningful_valley(min_idx):
+        """Check if valley has significant peaks on both sides."""
+        min_value = smoothed_counts[min_idx]
+        
+        left_slice = smoothed_counts[:min_idx]
+        left_has_rise = np.any(left_slice > min_value * rise_factor) if len(left_slice) > 5 else False
+        
+        right_slice = smoothed_counts[min_idx+1:]
+        right_has_rise = np.any(right_slice > min_value * rise_factor) if len(right_slice) > 5 else False
+        
+        return left_has_rise and right_has_rise
+    
 
-    if len(min_indices) > 0:
-        min_idx = min_indices[np.argmin(smoothed_counts[min_indices])]
-        min_position = (bins[min_idx] + bins[min_idx + 1]) / 2
-        logger.info(f"Minimum at x ≈ {min_position:.3f}")
+    if abs_is_local:
+        min_position = abs_min_position
+        logger.info(f"Minimum at x ≈ {min_position:.3f} is absolute minimum")
+        
+    elif at_left_edge:
+        if len(min_indices) > 0:
+            deepest_idx = min_indices[np.argmin(smoothed_counts[min_indices])]
+            if is_meaningful_valley(deepest_idx):
+                min_position = bin_centers[deepest_idx]
+                logger.info(f"Minimum at x ≈ {min_position:.3f} is local minimum")
+            else:
+                min_position = min_catch_low
+                logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exists and absolute Minimum occurs at 0")
+        else:
+            min_position = min_catch_low
+            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exsits and absolute Minimum occurs at 0")
+            
+    elif at_right_edge:
+        if len(min_indices) > 0:
+            deepest_idx = min_indices[np.argmin(smoothed_counts[min_indices])]
+            if is_meaningful_valley(deepest_idx):
+                min_position = bin_centers[deepest_idx]
+            else:
+                min_position = min_catch_high
+                logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
+        else:
+            min_position = min_catch_high
+            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
+            
     else:
-        min_position = min_catch
-        logger.info(f"No minima detected. setting minimum at x ≈ {min_position:.3f}")
-
+        if is_meaningful_valley(abs_min_idx):
+            min_position = abs_min_position
+            logger.info(f"Minimum at x ≈ {min_position:.3f} is absolute minimum")
+        else:
+            min_position = min_catch_high
+            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
+    
     output_png = os.path.join(save_path, "proposals/threshold_identification.png")
 
     # Plot to visualize
@@ -748,7 +814,7 @@ def calculate_threshold(
     plt.close()
 
     df.insert(3, "Class", (df["Cell Likelihood"] >= min_position).astype(int))
-
+    
     return df, min_position
 
 
