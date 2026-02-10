@@ -343,7 +343,7 @@ def run():
         mode = mode.replace("[", "").replace("]", "").casefold()
 
         # Getting inference model
-        model_config_path = smartspim_production_models.joinpath("config.json")
+        model_config_path = smartspim_production_models.joinpath("config_dev.json")
 
         if not model_config_path.exists():
             msg = (

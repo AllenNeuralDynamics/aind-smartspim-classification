@@ -1,5 +1,5 @@
 metadata_version: 1
-name: aind-smartspim-classification-0.0.9
+name: aind-smartspim-classification-0.1.0
 description: Large-scale image cell classification using a finetuned cellfinder model.
 tags:
 - SmartSPIM
@@ -9,7 +9,7 @@ authors:
   - name: Allen Institute for Neural Dynamics
 - name: Nicholas Lusk
   affiliations:
-  - name: Allen Institute for Brain Scei
+  - name: Allen Institute for Brain Science
 - name: Sharmishtaa Seshamani
   affiliations:
   - name: Allen Institute for Neural Dynamics

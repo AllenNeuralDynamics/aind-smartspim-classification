@@ -1,5 +1,8 @@
 """
-Module for the classification of smartspim datasets
+Module for the classification of smartspim datasets.
+This reads a deep learning model which is in the
+aind-benchmark-data bucket trained to classify 3D
+blocks if they are cells or not.
 """
 
 import json
@@ -12,6 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import keras
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -21,38 +25,23 @@ from aind_large_scale_prediction.generator.utils import (
     concatenate_lazy_data, recover_global_position, unpad_global_coords)
 from aind_large_scale_prediction.io import ImageReaderFactory
 from natsort import natsorted
+from scipy.ndimage import gaussian_filter1d
+from scipy.signal import argrelmin
 
 from .__init__ import __maintainers__, __pipeline_version__, __version__
 from ._shared.types import PathLike
+from .model.layers import GroupNormalization3D, ReduceMax3D, ReduceMean3D
+from .model.losses import BinaryFocalLoss, CategoricalFocalLoss
 from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-import keras.backend as K
-import tensorflow as tf
-
-# Not compatible with new keras and will have to figure out
-# @keras.saving.register_keras_serializable()
-# def f1(y_true, y_pred):
-#    y_pred = K.round(y_pred)
-#    y_pred = K.cast(y_pred, tf.float32)
-#    y_true = K.cast(y_true, tf.float32)
-#
-#    tp = K.sum(K.cast(y_true * y_pred, "float"), axis=0)
-#    tn = K.sum(K.cast((1 - y_true) * (1 - y_pred), "float"), axis=0)
-#    fp = K.sum(K.cast((1 - y_true) * y_pred, "float"), axis=0)
-#    fn = K.sum(K.cast(y_true * (1 - y_pred), "float"), axis=0)
-
-#    p = tp / (tp + fp + K.epsilon())
-#    r = tp / (tp + fn + K.epsilon())
-
-#    f1 = 2 * p * r / (p + r + K.epsilon())
-#    f1 = tf.where(tf.math.is_nan(f1), tf.zeros_like(f1), f1)
-#    return K.mean(f1)
-
 
 def extract_centered_3d_block(
-    big_block: np.array, center: Tuple, size: Tuple, pad_value: Optional[int] = 0
+    big_block: np.array,
+    center: Tuple[int, int, int],
+    size: Tuple[int, int, int],
+    pad_value: Optional[int] = 0,
 ):
     """
     Extract a centered 3D block around a specified center and pad it if needed.
@@ -191,7 +180,8 @@ def cell_classification(
         Logging object
 
     cell_proposals: pd.DataFrame
-        Proposals in the whole brain. Required columns: ['Z', 'Y', 'X', 'fg', 'bg']
+        Proposals in the whole brain.
+        Required columns: ['Z', 'Y', 'X', 'fg', 'bg']
 
     prediction_chunksize: Optional[Tuple]
         Chunksize that will be used to run predictions on
@@ -303,11 +293,22 @@ def cell_classification(
 
     if "normalization" in model_config["metadata"].keys():
         standardize = True
+        try:
+            norm_type = model_config["metadata"]["normalization"]["type"]
+        except:
+            norm_type = "featurewise"
+
+        if norm_type == "percentile":
+            p_range = model_config["metadata"]["normalization"]["range"]
+        else:
+            p_range = []
+
         means = model_config["metadata"]["normalization"]["means"]
         standard_deviations = model_config["metadata"]["normalization"][
             "standard_deviations"
         ]
 
+        logger.info(f"Model normalization type: {norm_type}")
         logger.info(f"Model means being used: {means}")
         logger.info(f"Model STDs being used: {standard_deviations}")
     else:
@@ -338,7 +339,7 @@ def cell_classification(
         np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
     )
     # Estimate the number of blocks that fit within 80% memory
-    max_blocks = target_memory // block_size_bytes
+    max_blocks = 100000  # target_memory // block_size_bytes
     logger.info(f"Maximum blocks: {max_blocks}")
 
     curr_blocks = 0
@@ -469,8 +470,27 @@ def cell_classification(
 
             if standardize:
                 for i in range(2):
-                    blocks_to_classify[:, :, :, :, i] -= means[i]
-                    blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
+                    if norm_type == "featurewise":
+                        blocks_to_classify[:, :, :, :, i] -= means[i]
+                        blocks_to_classify[:, :, :, :, i] /= (
+                            standard_deviations[i] + 1e-7
+                        )
+                    elif norm_type == "percentile":
+                        for batch_idx in range(blocks_to_classify.shape[0]):
+                            sample = blocks_to_classify[batch_idx, :, :, :, i]
+
+                            # Compute percentiles for this individual sample
+                            p_low, p_high = np.percentile(sample, p_range)
+
+                            # Normalize to [0, 1] range
+                            if p_high > p_low:
+                                sample_norm = (sample - p_low) / (p_high - p_low)
+                                sample_norm = np.clip(sample_norm, 0, 1)
+                            else:
+                                # Edge case: uniform patch
+                                sample_norm = np.ones_like(sample) * 0.5
+
+                            blocks_to_classify[batch_idx, :, :, :, i] = sample_norm
 
                 logger.info(
                     f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}"
@@ -486,23 +506,17 @@ def cell_classification(
                     f"Normalized background STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
                 )
 
-            predictions_raw = model.predict(blocks_to_classify)
-            predictions = predictions_raw.round()
-            predictions = predictions.astype("uint16")
+            predictions_raw = model.predict(blocks_to_classify, batch_size=1024)
 
-            predictions = np.argmax(predictions, axis=1)
-
-            if predictions.shape[0] != blocks_to_classify.shape[0]:
+            if predictions_raw.shape[0] != blocks_to_classify.shape[0]:
                 error = (
                     "Shapes between blocks and predictions are not the same:"
-                    f"blocks: {blocks_to_classify.shape} - Proposals: {predictions.shape}"
+                    f"blocks: {blocks_to_classify.shape} - Proposals: {predictions_raw.shape}"
                 )
                 ValueError(error)
 
             cell_likelihood = []
             for idx, proposal in enumerate(picked_proposals):
-                cell_type = predictions[idx]
-
                 cell_z, cell_y, cell_x = upsample_position(
                     proposal[:3], downsample_factor=downsample
                 )
@@ -512,7 +526,6 @@ def cell_classification(
                         cell_x,
                         cell_y,
                         cell_z,
-                        cell_type,
                         predictions_raw[idx][1],
                         *picked_intensities[idx, :],
                     ]
@@ -526,7 +539,6 @@ def cell_classification(
                     "x",
                     "y",
                     "z",
-                    "Class",
                     "Cell Likelihood",
                     "Foreground",
                     "Background",
@@ -568,40 +580,37 @@ def cell_classification(
 
         if standardize:
             for i in range(2):
-                blocks_to_classify[:, :, :, :, i] -= means[i]
-                blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
+                if norm_type == "featurewise":
+                    blocks_to_classify[:, :, :, :, i] -= means[i]
+                    blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
+                elif norm_type == "percentile":
+                    for batch_idx in range(blocks_to_classify.shape[0]):
+                        sample = blocks_to_classify[batch_idx, :, :, :, i]
 
-            logger.info(
-                f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}"
-            )
-            logger.info(
-                f"Normalized signal STD {np.std(blocks_to_classify[:, :, :, :, 0])}"
-            )
+                        # Compute percentiles for this individual sample
+                        p_low, p_high = np.percentile(sample, p_range)
 
-            logger.info(
-                f"Normalized background mean: {np.mean(blocks_to_classify[:, :, :, :, 1])}"
-            )
-            logger.info(
-                f"Normalized background STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
-            )
+                        # Normalize to [0, 1] range
+                        if p_high > p_low:
+                            sample_norm = (sample - p_low) / (p_high - p_low)
+                            sample_norm = np.clip(sample_norm, 0, 1)
+                        else:
+                            # Edge case: uniform patch
+                            sample_norm = np.ones_like(sample) * 0.5
 
-        predictions_raw = model.predict(blocks_to_classify)
-        predictions = predictions_raw.round()
-        predictions = predictions.astype("uint16")
+                        blocks_to_classify[batch_idx, :, :, :, i] = sample_norm
 
-        predictions = np.argmax(predictions, axis=1)
+        predictions_raw = model.predict(blocks_to_classify, batch_size=1024)
 
-        if predictions.shape[0] != blocks_to_classify.shape[0]:
+        if predictions_raw.shape[0] != blocks_to_classify.shape[0]:
             error = (
                 "Shapes between blocks and predictions are not the same:"
-                f"blocks: {blocks_to_classify.shape} - Proposals: {predictions.shape}"
+                f"blocks: {blocks_to_classify.shape} - Proposals: {predictions_raw.shape}"
             )
             ValueError(error)
 
         cell_likelihood = []
         for idx, proposal in enumerate(picked_proposals):
-            cell_type = predictions[idx]
-
             cell_z, cell_y, cell_x = upsample_position(
                 proposal[:3], downsample_factor=downsample
             )
@@ -611,7 +620,6 @@ def cell_classification(
                     cell_x,
                     cell_y,
                     cell_z,
-                    cell_type,
                     predictions_raw[idx][1],
                     *picked_intensities[idx, :],
                 ]
@@ -625,7 +633,6 @@ def cell_classification(
                 "x",
                 "y",
                 "z",
-                "Class",
                 "Cell Likelihood",
                 "Foreground",
                 "Background",
@@ -676,6 +683,140 @@ def cell_classification(
 
     return str(image_path), data_processes
 
+def calculate_threshold(
+    df: pd.DataFrame,
+    save_path: PathLike,
+    logger = logging.Logger,
+    n_bins: int = 256,
+    min_catch_high: float = 0.850,
+    min_catch_low: float = 0.050,
+    rise_factor: float = 2.0,
+):
+    """Calculates the class decision boundary between non-cells and cells.
+    
+    Parameters
+    ----------
+    df: pd.DataFrame
+        dataframe created from merging all of the classification block
+        dataframes
+        
+    save_path: Pathlike,
+        Location to save the PNG depicting location of threshold and likelihood
+        distribution
+
+    logger: logging.logger
+        logging Object
+
+    n_bins: int
+        number of binds of histogram for calculating threshold. Default = 256
+
+    min_catch_high : float
+        Fallback threshold when absolute min is at right edge (1.0) 
+        and no meaningful valley found. Default 0.950.
+        
+    min_catch_low : float
+        Fallback threshold when absolute min is at left edge (0.0)
+        and no meaningful valley found. Default 0.050.
+        
+    rise_factor : float
+        How high the peaks for cells and non-cells need to be above the valley
+        for it to be considered meaningful. Helps to avoid wiggles in the 
+        fit being assigned as thresholds
+
+    Returns
+    -------
+        pd.DataFrame
+            Dataframe with Class assignment for cells based on the calculated
+            threshold
+
+
+    """
+    data = df["Cell Likelihood"].values
+
+    counts, bins, _ = plt.hist(data, bins=n_bins)
+    smoothed_counts = gaussian_filter1d(counts, sigma=3)
+    bin_centers = (bins[:-1] + bins[1:]) / 2
+    
+    min_indices = argrelmin(smoothed_counts)[0]
+    abs_min_idx = np.argmin(smoothed_counts)
+    abs_min_position = bin_centers[abs_min_idx]
+    
+    # Check if absolute min is near a local min
+    abs_is_local = any(abs(abs_min_idx - idx) <= 2 for idx in min_indices) if len(min_indices) > 0 else False
+    
+    # Check if absolute min is at either edge
+    at_left_edge = abs_min_idx == 0
+    at_right_edge = abs_min_idx == n_bins - 1
+    
+    def is_meaningful_valley(min_idx):
+        """Check if valley has significant peaks on both sides."""
+        min_value = smoothed_counts[min_idx]
+        
+        left_slice = smoothed_counts[:min_idx]
+        left_has_rise = np.any(left_slice > min_value * rise_factor) if len(left_slice) > 5 else False
+        
+        right_slice = smoothed_counts[min_idx+1:]
+        right_has_rise = np.any(right_slice > min_value * rise_factor) if len(right_slice) > 5 else False
+        
+        return left_has_rise and right_has_rise
+    
+
+    if abs_is_local:
+        min_position = abs_min_position
+        logger.info(f"Minimum at x ≈ {min_position:.3f} is absolute minimum")
+        
+    elif at_left_edge:
+        if len(min_indices) > 0:
+            deepest_idx = min_indices[np.argmin(smoothed_counts[min_indices])]
+            if is_meaningful_valley(deepest_idx):
+                min_position = bin_centers[deepest_idx]
+                logger.info(f"Minimum at x ≈ {min_position:.3f} is local minimum")
+            else:
+                min_position = min_catch_low
+                logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exists and absolute Minimum occurs at 0")
+        else:
+            min_position = min_catch_low
+            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exsits and absolute Minimum occurs at 0")
+            
+    elif at_right_edge:
+        if len(min_indices) > 0:
+            deepest_idx = min_indices[np.argmin(smoothed_counts[min_indices])]
+            if is_meaningful_valley(deepest_idx):
+                min_position = bin_centers[deepest_idx]
+            else:
+                min_position = min_catch_high
+                logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
+        else:
+            min_position = min_catch_high
+            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
+            
+    else:
+        if is_meaningful_valley(abs_min_idx):
+            min_position = abs_min_position
+            logger.info(f"Minimum at x ≈ {min_position:.3f} is absolute minimum")
+        else:
+            min_position = min_catch_high
+            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
+    
+    output_png = os.path.join(save_path, "proposals/threshold_identification.png")
+
+    # Plot to visualize
+    plt.figure()
+    bin_centers = (bins[:-1] + bins[1:]) / 2
+    plt.plot(bin_centers, counts, alpha=0.5, label="Original")
+    plt.plot(bin_centers, smoothed_counts, label="Smoothed")
+    plt.axvline(
+        min_position, color="r", linestyle="--", label=f"Min at {min_position:.3f}"
+    )
+    plt.yscale("log")
+    plt.legend()
+    plt.savefig(output_png, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    df.insert(3, "Class", (df["Cell Likelihood"] >= min_position).astype(int))
+    
+    return df, min_position
+
 
 def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logger):
     """
@@ -704,6 +845,8 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     # save list of all cells
     df = pd.concat(cells)
     df = df.reset_index(drop=True)
+    df, threshold = calculate_threshold(df, save_path, logger)
+
     output_csv = os.path.join(save_path, "proposals/cell_likelihoods.csv")
 
     df.to_csv(output_csv)
@@ -716,10 +859,12 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     output_csv = os.path.join(save_path, "detected_cells.csv")
     df_cells.to_csv(output_csv)
 
-    return output_csv, df_cells
+    return output_csv, df_cells, threshold
 
 
-def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
+def cumulative_likelihoods(
+    threshold: float, save_path: PathLike, logger: logging.Logger
+):
     """
     Takes the cell_likelihoods.csv and creates a cumulative metric
     """
@@ -740,6 +885,7 @@ def cumulative_likelihoods(save_path: PathLike, logger: logging.Logger):
         "Noncell Counts": len(df_non_cells),
         "Noncell Likelihood Mean": df_non_cells["Cell Likelihood"].mean(),
         "Noncell Likelihood STD": df_non_cells["Cell Likelihood"].std(),
+        "Classification Threshold": threshold,
     }
 
     df_out = pd.DataFrame(likelihood_metrics, index=["Metrics"])
@@ -794,6 +940,12 @@ def generate_neuroglancer_link(
     else:
         crossSectionOrientation = [np.cos(np.pi / 4), 0.0, 0.0, np.cos(np.pi / 4)]
 
+    bkg_channel = os.path.basename(smartspim_config["background_channel"]).split(".")[0]
+
+    signal_ch = int(smartspim_config["channel"].split("_")[-1])
+    signal_hex_val = utils.wavelength_to_hex_alternate(signal_ch)
+    signal_hex_code = f"#{str(hex(signal_hex_val))[2:]}"
+
     json_state = {
         "ng_link": f"{ng_configs['base_url']}{ng_path}",
         "title": smartspim_config["channel"],
@@ -806,14 +958,27 @@ def generate_neuroglancer_link(
                 "source": f"zarr://s3://{bucket}/{smartspim_config['name']}/image_tile_fusing/OMEZarr/{smartspim_config['channel']}.zarr",
                 "type": "image",
                 "tab": "rendering",
-                "shader": '#uicontrol vec3 color color(default="#ffffff")\n#uicontrol invlerp normalized\nvoid main() {\nemitRGB(color * normalized());\n}',
+                "shader": f'#uicontrol vec3 color color(default="{signal_hex_code}")\n#uicontrol invlerp normalized\nvoid main() {{\nemitRGB(color * normalized());\n}}',
                 "shaderControls": {
                     "normalized": {
-                        "range": [0, dynamic_range[0]],
-                        "window": [0, dynamic_range[1]],
+                        "range": [0, dynamic_range[0][0]],
+                        "window": [0, dynamic_range[0][1]],
                     },
                 },
                 "name": f"Channel: {smartspim_config['channel']}",
+            },
+            {
+                "source": f"zarr://s3://{bucket}/{smartspim_config['name']}/image_tile_fusing/OMEZarr/{bkg_channel}.zarr",
+                "type": "image",
+                "tab": "rendering",
+                "shader": '#uicontrol vec3 color color(default="#ffffff")\n#uicontrol invlerp normalized\nvoid main() {\nemitRGB(color * normalized());\n}',
+                "shaderControls": {
+                    "normalized": {
+                        "range": [0, dynamic_range[1][0]],
+                        "window": [0, dynamic_range[1][1]],
+                    },
+                },
+                "name": f"Background Channel: {bkg_channel}",
             },
             {
                 "source": f"precomputed://s3://{bucket}/{smartspim_config['name']}/image_cell_segmentation/{smartspim_config['channel']}/visualization/detected_precomputed",
@@ -899,21 +1064,28 @@ def main(
 
     # merge block .xmls and .csvs into single file
     # merge_xml(smartspim_config["metadata_path"], smartspim_config["save_path"], logger)
-    classified_cells_path, cells_df = merge_csv(
+    classified_cells_path, cells_df, threshold = merge_csv(
         smartspim_config["metadata_path"], smartspim_config["save_path"], logger
     )
 
     # generate cumulative metrics
-    cumulative_likelihoods(smartspim_config["save_path"], logger)
+    cumulative_likelihoods(threshold, smartspim_config["save_path"], logger)
 
     image_path = os.path.abspath(
         f"{smartspim_config['input_data']}/{smartspim_config['input_channel']}"
     )
 
-    dynamic_range = utils.calculate_dynamic_range(image_path, 99, 3)
+    background_path = os.path.abspath(
+        f"{smartspim_config['input_data']}/{smartspim_config['background_channel']}"
+    )
+
+    dynamic_range_signal = utils.calculate_dynamic_range(image_path, 99, 3)
+    dynamic_range_bkg = utils.calculate_dynamic_range(background_path, 99, 3)
+
+    dynamic_ranges = [dynamic_range_signal, dynamic_range_bkg]
 
     generate_neuroglancer_link(
-        cells_df, neuroglancer_config, smartspim_config, dynamic_range, logger
+        cells_df, neuroglancer_config, smartspim_config, dynamic_ranges, logger
     )
 
     utils.generate_processing(
