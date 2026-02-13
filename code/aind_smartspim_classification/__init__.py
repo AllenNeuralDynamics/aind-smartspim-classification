@@ -20,4 +20,4 @@ __maintainer_emails__ = [
 ]
 __title__ = "aind-smartspim-cell-proposals"
 __status__ = "Production"  # 'Production', 'Beta'
-__pipeline_version__ = "4.0.0"
+__pipeline_version__ = "5.0.0"
