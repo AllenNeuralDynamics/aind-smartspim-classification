@@ -9,6 +9,7 @@ import json
 import logging
 import multiprocessing
 import os
+import dask.array as da
 from datetime import datetime
 from glob import glob
 from pathlib import Path
@@ -897,6 +898,7 @@ def generate_neuroglancer_link(
     ng_configs: dict,
     smartspim_config: dict,
     dynamic_range: list,
+    chunk_size: list,
     logger: logging.Logger,
     bucket="aind-open-data",
 ):
@@ -929,8 +931,14 @@ def generate_neuroglancer_link(
     utils.create_folder(output_precomputed)
     print(f"Output cells precomputed: {output_precomputed}")
 
-    utils.generate_precomputed_cells(
-        cells_df, precompute_path=output_precomputed, configs=ng_configs
+    #utils.generate_precomputed_cells(
+    #    cells_df, precompute_path=output_precomputed, configs=ng_configs
+    #)
+    utils.generate_multi_res_precomputed_cells(
+        cells_df[['z', 'y', 'x']].values,
+        precompute_path=output_precomputed,
+        chunk_size=chunk_size,
+        resolution=ng_configs["dimensions"],
     )
 
     ng_path = f"s3://{bucket}/{smartspim_config['name']}/image_cell_segmentation/{smartspim_config['channel']}/visualization/neuroglancer_config.json"
@@ -1084,8 +1092,14 @@ def main(
 
     dynamic_ranges = [dynamic_range_signal, dynamic_range_bkg]
 
+    zarray_path = os.path.join(image_path, "0", '.zarray')
+    with open(zarray_path) as fp:
+        zarray_info = json.load(fp)
+    
+    chunk_size = zarray_info["shape"][-3:]
+
     generate_neuroglancer_link(
-        cells_df, neuroglancer_config, smartspim_config, dynamic_ranges, logger
+        cells_df, neuroglancer_config, smartspim_config, dynamic_ranges, chunk_size, logger
     )
 
     utils.generate_processing(

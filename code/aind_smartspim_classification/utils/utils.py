@@ -682,11 +682,11 @@ def find_intersecting_coordinates(coordinates,lower_bounds,upper_bounds):
 
 def generate_multi_res_precomputed_cells(
     unique_coordinates,
-    layer_dir,
-    grid_shape,
+    precompute_path,
     chunk_size,
     resolution,
-    limit=10000,
+    grid_shape=[1,1,1],
+    limit=20000,
     debug=False
 ):
     """ 
@@ -700,7 +700,7 @@ def generate_multi_res_precomputed_cells(
         An 2D array of shape (N,3) where N is the number of points
         that you want to spatially index. Rows are objects, columns are x,y,z
         Duplicates should be removed already.
-    layer_dir: PathLike
+    precompute_path: PathLike
         Base precomputed layer directory in which to save the info file
         and spatial index directories
     grid_shape: list
@@ -729,9 +729,7 @@ def generate_multi_res_precomputed_cells(
     info['@type'] = "neuroglancer_annotations_v1"
     info['annotation_type'] = "POINT"
     info['by_id'] = {'key':'by_id'}
-    info['dimensions'] = {'x':[str(resolution[0]),'m'],
-                          'y':[str(resolution[1]),'m'],
-                          'z':[str(resolution[2]),'m']}
+    info['dimensions'] = resolution,
     info['lower_bound'] = [0,0,0]
     info['upper_bound'] = chunk_size
     info['properties'] = []
@@ -739,8 +737,8 @@ def generate_multi_res_precomputed_cells(
     info['spatial'] = []
     
     # Create layer dir if it doesn't exist yet
-    if not os.path.exists(layer_dir):
-        os.mkdir(layer_dir)
+    if not os.path.exists(precompute_path):
+        os.mkdir(precompute_path)
     
     # initialize some variables
     level=0
@@ -772,7 +770,7 @@ def generate_multi_res_precomputed_cells(
         maxCount[level] = max(N_annotations_this_level)
         if maxCount[level] == 0:
             print("Finished! Writing info file:")
-            info_path = os.path.join(layer_dir,"info")
+            info_path = os.path.join(precompute_path,"info")
             print(info_path)
             with open(info_path,'w') as outfile:
                 json.dump(info,outfile,indent=2)
@@ -835,7 +833,7 @@ def generate_multi_res_precomputed_cells(
                 if debug:
                     print(f"subsetted {len(subset_cells)} annotations")
                 # save these cells to a spatial index file
-                save_cellfile(level,cell,subset_cells,layer_dir,debug=debug)
+                save_cellfile(level,cell,subset_cells,precompute_path,debug=debug)
                 
                 # Figure out the leftover annotations that weren't included in the subset
                 indices_annotations_this_cell = range(len(annotations_this_cell))
