@@ -29,6 +29,7 @@ RUN pip install -U --no-cache-dir \
     aind-data-schema==1.0.0 \
     aind-ng-link==1.0.6 \
     git+https://github.com/AllenNeuralDynamics/aind-large-scale-prediction.git@unpinned-versions \
+    dask[distributed]==2024.4.1 \
     psutil==5.9.8 \
     jupyter-server-proxy==3.2.2 \
     cellfinder>=1.0.0 \
