@@ -205,6 +205,7 @@ class ReduceMean3D(Layer):
     """
 
     def __init__(self, **kwargs):
+        """Initialize the layer (no parameters)."""
         super().__init__(**kwargs)
 
     def call(self, inputs, mask=None):
@@ -248,6 +249,7 @@ class ReduceMax3D(Layer):
     """
 
     def __init__(self, **kwargs):
+        """Initialize the layer (no parameters)."""
         super().__init__(**kwargs)
 
     def call(self, inputs, mask=None):

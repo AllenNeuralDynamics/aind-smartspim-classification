@@ -26,8 +26,7 @@ import dask.array as da
 import matplotlib.pyplot as plt
 import numpy as np
 import psutil
-from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
-                                              Processing)
+from aind_data_schema.core.processing import DataProcess, PipelineProcess, Processing
 from scipy import ndimage as ndi
 from scipy.signal import argrelmin
 

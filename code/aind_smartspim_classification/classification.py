@@ -22,7 +22,10 @@ import torch
 from aind_data_schema.core.processing import DataProcess, ProcessName
 from aind_large_scale_prediction.generator.dataset import create_data_loader
 from aind_large_scale_prediction.generator.utils import (
-    concatenate_lazy_data, recover_global_position, unpad_global_coords)
+    concatenate_lazy_data,
+    recover_global_position,
+    unpad_global_coords,
+)
 from aind_large_scale_prediction.io import ImageReaderFactory
 from natsort import natsorted
 from scipy.ndimage import gaussian_filter1d
@@ -295,7 +298,7 @@ def cell_classification(
         standardize = True
         try:
             norm_type = model_config["metadata"]["normalization"]["type"]
-        except:
+        except KeyError:
             norm_type = "featurewise"
 
         if norm_type == "percentile":
@@ -330,6 +333,11 @@ def cell_classification(
         f"Total batches: {total_batches} - cell proposals: {cell_proposals.shape[0]}"
     )
 
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "No CUDA-capable GPU detected. " "This pipeline requires a GPU to run."
+        )
+
     total_memory = torch.cuda.get_device_properties(device).total_memory
     target_memory = int(0.80 * total_memory)
 
@@ -338,8 +346,7 @@ def cell_classification(
     block_size_bytes = (
         np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
     )
-    # Estimate the number of blocks that fit within 80% memory
-    max_blocks = 100000  # target_memory // block_size_bytes
+    max_blocks = target_memory // block_size_bytes
     logger.info(f"Maximum blocks: {max_blocks}")
 
     curr_blocks = 0
@@ -683,23 +690,24 @@ def cell_classification(
 
     return str(image_path), data_processes
 
+
 def calculate_threshold(
     df: pd.DataFrame,
     save_path: PathLike,
-    logger = logging.Logger,
+    logger: logging.Logger = None,
     n_bins: int = 256,
     min_catch_high: float = 0.850,
     min_catch_low: float = 0.050,
     rise_factor: float = 2.0,
 ):
     """Calculates the class decision boundary between non-cells and cells.
-    
+
     Parameters
     ----------
     df: pd.DataFrame
         dataframe created from merging all of the classification block
         dataframes
-        
+
     save_path: Pathlike,
         Location to save the PNG depicting location of threshold and likelihood
         distribution
@@ -711,16 +719,16 @@ def calculate_threshold(
         number of binds of histogram for calculating threshold. Default = 256
 
     min_catch_high : float
-        Fallback threshold when absolute min is at right edge (1.0) 
+        Fallback threshold when absolute min is at right edge (1.0)
         and no meaningful valley found. Default 0.950.
-        
+
     min_catch_low : float
         Fallback threshold when absolute min is at left edge (0.0)
         and no meaningful valley found. Default 0.050.
-        
+
     rise_factor : float
         How high the peaks for cells and non-cells need to be above the valley
-        for it to be considered meaningful. Helps to avoid wiggles in the 
+        for it to be considered meaningful. Helps to avoid wiggles in the
         fit being assigned as thresholds
 
     Returns
@@ -736,35 +744,46 @@ def calculate_threshold(
     counts, bins, _ = plt.hist(data, bins=n_bins)
     smoothed_counts = gaussian_filter1d(counts, sigma=3)
     bin_centers = (bins[:-1] + bins[1:]) / 2
-    
+
     min_indices = argrelmin(smoothed_counts)[0]
     abs_min_idx = np.argmin(smoothed_counts)
     abs_min_position = bin_centers[abs_min_idx]
-    
+
     # Check if absolute min is near a local min
-    abs_is_local = any(abs(abs_min_idx - idx) <= 2 for idx in min_indices) if len(min_indices) > 0 else False
-    
+    abs_is_local = (
+        any(abs(abs_min_idx - idx) <= 2 for idx in min_indices)
+        if len(min_indices) > 0
+        else False
+    )
+
     # Check if absolute min is at either edge
     at_left_edge = abs_min_idx == 0
     at_right_edge = abs_min_idx == n_bins - 1
-    
+
     def is_meaningful_valley(min_idx):
         """Check if valley has significant peaks on both sides."""
         min_value = smoothed_counts[min_idx]
-        
+
         left_slice = smoothed_counts[:min_idx]
-        left_has_rise = np.any(left_slice > min_value * rise_factor) if len(left_slice) > 5 else False
-        
-        right_slice = smoothed_counts[min_idx+1:]
-        right_has_rise = np.any(right_slice > min_value * rise_factor) if len(right_slice) > 5 else False
-        
+        left_has_rise = (
+            np.any(left_slice > min_value * rise_factor)
+            if len(left_slice) > 5
+            else False
+        )
+
+        right_slice = smoothed_counts[min_idx + 1 :]
+        right_has_rise = (
+            np.any(right_slice > min_value * rise_factor)
+            if len(right_slice) > 5
+            else False
+        )
+
         return left_has_rise and right_has_rise
-    
 
     if abs_is_local:
         min_position = abs_min_position
         logger.info(f"Minimum at x ≈ {min_position:.3f} is absolute minimum")
-        
+
     elif at_left_edge:
         if len(min_indices) > 0:
             deepest_idx = min_indices[np.argmin(smoothed_counts[min_indices])]
@@ -773,11 +792,15 @@ def calculate_threshold(
                 logger.info(f"Minimum at x ≈ {min_position:.3f} is local minimum")
             else:
                 min_position = min_catch_low
-                logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exists and absolute Minimum occurs at 0")
+                logger.info(
+                    f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exists and absolute Minimum occurs at 0"
+                )
         else:
             min_position = min_catch_low
-            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exsits and absolute Minimum occurs at 0")
-            
+            logger.info(
+                f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exsits and absolute Minimum occurs at 0"
+            )
+
     elif at_right_edge:
         if len(min_indices) > 0:
             deepest_idx = min_indices[np.argmin(smoothed_counts[min_indices])]
@@ -785,19 +808,25 @@ def calculate_threshold(
                 min_position = bin_centers[deepest_idx]
             else:
                 min_position = min_catch_high
-                logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
+                logger.info(
+                    f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0"
+                )
         else:
             min_position = min_catch_high
-            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
-            
+            logger.info(
+                f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0"
+            )
+
     else:
         if is_meaningful_valley(abs_min_idx):
             min_position = abs_min_position
             logger.info(f"Minimum at x ≈ {min_position:.3f} is absolute minimum")
         else:
             min_position = min_catch_high
-            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
-    
+            logger.info(
+                f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0"
+            )
+
     output_png = os.path.join(save_path, "proposals/threshold_identification.png")
 
     # Plot to visualize
@@ -814,7 +843,7 @@ def calculate_threshold(
     plt.close()
 
     df.insert(3, "Class", (df["Cell Likelihood"] >= min_position).astype(int))
-    
+
     return df, min_position
 
 
@@ -837,10 +866,16 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     for f in natsorted(tmp_files):
         try:
             cells.append(pd.read_csv(f, index_col=0))
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not read {f}: {e}")
 
     utils.create_folder(f"{save_path}/proposals")
+
+    if not cells:
+        raise RuntimeError(
+            f"No classified block CSVs could be read from {metadata_path}. "
+            "Check that cell_classification() completed successfully."
+        )
 
     # save list of all cells
     df = pd.concat(cells)
@@ -1056,10 +1091,12 @@ def main(
     profile_process.start()
 
     # run cell detection
+    chunk_size = smartspim_config.get("chunk_size", 128)
     image_path, data_processes = cell_classification(
         smartspim_config=smartspim_config,
         logger=logger,
         cell_proposals=cell_proposals,
+        prediction_chunksize=(chunk_size, chunk_size, chunk_size),
     )
 
     # merge block .xmls and .csvs into single file
