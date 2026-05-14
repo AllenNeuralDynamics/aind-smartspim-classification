@@ -15,27 +15,23 @@ import numpy as np
 import pandas as pd
 import torch
 from aind_smartspim_classification import classification
-from aind_smartspim_classification.params import get_yaml
 from aind_smartspim_classification.utils import utils
 
 
-def parse_cell_xml(xml_path: str) -> np.array:
+def parse_cell_xml(xml_path: str) -> pd.DataFrame:
     """
     Parses a XML with cell proposals coming from
     the aind-smartspim-segmentation capsule.
 
     Returns
     -------
-    np.array
-        Array with the cell proposals in order ZYX
+    pd.DataFrame
+        DataFrame with columns ["Z", "Y", "X"] containing cell proposals.
     """
 
     # Load and parse the XML file
-    tree = ET.parse(xml_path)  # Replace 'file.xml' with your file path
+    tree = ET.parse(xml_path)
     root = tree.getroot()
-
-    # Extract image filename
-    # image_filename = root.find("./Image_Properties/Image_Filename").text
 
     # Extract marker data
     marker_data = []
@@ -45,7 +41,7 @@ def parse_cell_xml(xml_path: str) -> np.array:
         marker_z = int(marker.find("MarkerZ").text)
         marker_data.append([marker_z, marker_y, marker_x])
 
-    return np.array(marker_data, dtype=np.uint32)
+    return pd.DataFrame(marker_data, columns=["Z", "Y", "X"])
 
 
 def parse_cell_csv(csv_path: str):
@@ -106,7 +102,7 @@ def get_data_config(
         derivatives_dict = utils.read_json_as_dict(
             glob(f"{data_folder}/{processing_manifest_path}")[0]
         )
-    except:
+    except (IndexError, KeyError):
         derivatives_dict = utils.read_json_as_dict(
             glob(f"{data_folder}/processing_manifest_*")[0]
         )
@@ -119,16 +115,15 @@ def get_data_config(
     return derivatives_dict, smartspim_dataset
 
 
-def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict):
+def set_up_pipeline_parameters(
+    pipeline_config: dict, default_config: dict, chunk_size: int = 128
+):
     """
-    Sets up smartspim stitching parameters that come from the
-    pipeline configuration
+    Sets up smartspim classification parameters that come from the
+    pipeline configuration.
 
     Parameters
     -----------
-    smartspim_dataset: str
-        String with the smartspim dataset name
-
     pipeline_config: dict
         Dictionary that comes with the parameters
         for the pipeline described in the
@@ -139,21 +134,26 @@ def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict):
         parameters to execute this capsule with
         smartspim data
 
+    chunk_size: int
+        Spatial size (voxels) of each prediction chunk along Z, Y, and X.
+        Larger values increase GPU memory usage but reduce overhead.
+        Default: 128
+
     Returns
     -----------
     Dict
         Dictionary with the combined parameters
     """
 
-    default_config[
-        "input_channel"
-    ] = f"{pipeline_config['segmentation']['channel']}.zarr"
-    default_config[
-        "background_channel"
-    ] = f"{pipeline_config['segmentation']['background_channel']}.zarr"
+    default_config["input_channel"] = (
+        f"{pipeline_config['segmentation']['channel']}.zarr"
+    )
+    default_config["background_channel"] = (
+        f"{pipeline_config['segmentation']['background_channel']}.zarr"
+    )
     default_config["channel"] = pipeline_config["segmentation"]["channel"]
     default_config["input_scale"] = pipeline_config["segmentation"]["input_scale"]
-    default_config["chunk_size"] = int(128)
+    default_config["chunk_size"] = int(chunk_size)
 
     return default_config
 
@@ -384,8 +384,11 @@ def run():
         print("Initial cell classification config: ", default_config)
 
         # combine configs
+        chunk_size = int(classification_info.get("chunk_size", 128))
         smartspim_config = set_up_pipeline_parameters(
-            pipeline_config=pipeline_config, default_config=default_config
+            pipeline_config=pipeline_config,
+            default_config=default_config,
+            chunk_size=chunk_size,
         )
 
         smartspim_config["name"] = smartspim_dataset_name
@@ -418,8 +421,8 @@ def run():
 
         if not found_proposals:
             msg = (
-                "Cell proposals are not in"
-                f"{proposals_path_xml} nor {proposals_path_csv}"
+                f"Cell proposals not found in {data_folder}/{proposal_folder}. "
+                f"Expected one of: {proposal_assets}"
             )
             raise FileNotFoundError(msg)
 
