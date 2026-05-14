@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "aind-smartspim-classification"
+version = "0.1.0"
+description = "Cell candidate classification for the SmartSPIM pipeline using the CellFinder model."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Camilo Laiton", email = "camilo.laiton@alleninstitute.org" },
+    { name = "Nicholas Lusk", email = "nicholas.lusk@alleninstitute.org" },
+]
+requires-python = ">=3.9"
+dependencies = [
+    "aind-data-schema==1.0.0",
+    "aind-ng-link==1.0.6",
+    "cellfinder>=1.0.0",
+    "keras>=3.9.2",
+    "matplotlib",
+    "natsort",
+    "numpy",
+    "pandas",
+    "psutil",
+    "pyyaml",
+    "scipy",
+    "torch>=2.1.0",
+    "argschema",
+    "openpyxl",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "coverage",
+    "flake8",
+    "interrogate",
+    "isort",
+    "pytest",
+    "pytest-cov",
+]
+
+[tool.setuptools.packages.find]
+where = ["code"]
+
+[tool.pytest.ini_options]
+testpaths = ["code/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["aind_smartspim_classification"]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+
+[tool.isort]
+profile = "black"
