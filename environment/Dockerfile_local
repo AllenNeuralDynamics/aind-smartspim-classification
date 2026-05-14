@@ -57,7 +57,7 @@ FROM tensorflow/tensorflow:2.18.0-gpu as runtime
 LABEL maintainer="Camilo Laiton <camilo.laiton@alleninstitute.org>" \
       org.opencontainers.image.title="Image Cell Classification" \
       org.opencontainers.image.description="Container for cell classification in lightsheet images" \
-      org.opencontainers.image.version="0.0.6" \
+      org.opencontainers.image.version="0.1.1" \
       org.opencontainers.image.licenses="MIT"
 
 ARG DEBIAN_FRONTEND=noninteractive
