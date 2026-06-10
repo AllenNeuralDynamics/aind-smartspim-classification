@@ -173,20 +173,15 @@ def create_logger(output_log_path: PathLike):
     CURR_DATE_TIME = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     LOGS_FILE = f"{output_log_path}/classification_log_{CURR_DATE_TIME}.log"
 
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s - %(levelname)s : %(message)s",
-        datefmt="%Y-%m-%d %H:%M",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(LOGS_FILE, "a"),
-        ],
-        force=True,
+    file_handler = logging.FileHandler(LOGS_FILE, "a")
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(levelname)s : %(message)s", datefmt="%Y-%m-%d %H:%M"
+        )
     )
 
-    logging.disable("DEBUG")
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
+    logger.addHandler(file_handler)
 
     return logger
 

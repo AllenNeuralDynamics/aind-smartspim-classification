@@ -3,9 +3,11 @@ Main file to execute the smartspim classification
 in code ocean
 """
 
+import logging
 import os
 import shutil
 import sys
+import time
 import xml.etree.ElementTree as ET
 from glob import glob
 from pathlib import Path
@@ -14,8 +16,17 @@ from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import torch
-from aind_smartspim_classification import classification
+from schlog import setup_logging
+
+from aind_smartspim_classification import (
+    __pipeline_name__,
+    __title__,
+    __version__,
+    classification,
+)
 from aind_smartspim_classification.utils import utils
+
+logger = logging.getLogger(__name__)
 
 
 def parse_cell_xml(xml_path: str) -> pd.DataFrame:
@@ -96,7 +107,7 @@ def get_data_config(
     # Doing this because of Code Ocean, ideally we would have
     # a single dataset in the pipeline
 
-    print(f"Manifest Path: {data_folder}/{processing_manifest_path}")
+    logger.info(f"Manifest Path: {data_folder}/{processing_manifest_path}")
 
     try:
         derivatives_dict = utils.read_json_as_dict(
@@ -196,7 +207,7 @@ def get_detection_data(results_folder, dataset, channel, bucket="aind-open-data"
     for out in utils.execute_command_helper(
         f"aws s3 cp {s3_path} {results_folder}/cell_{channel}/ --recursive"
     ):
-        print(out)
+        logger.debug(out)
 
 
 def downsample_cell_locations(coordinates: np.ndarray, downscale_factors: list):
@@ -271,10 +282,10 @@ def copy_detection_files(
         shutil.copytree(
             detected_metadata_path, dest_detected_metadata_path, dirs_exist_ok=True
         )
-        print(f"Copied detection metadata to {dest_detected_metadata_path}")
+        logger.info(f"Copied detection metadata to {dest_detected_metadata_path}")
 
     else:
-        print(f"Detected metadata path not provided: {detected_metadata_path}")
+        logger.warning(f"Detected metadata path not provided: {detected_metadata_path}")
 
     # If detected visualization exists, we should copy it
     if os.path.exists(detected_visualization_path):
@@ -285,10 +296,10 @@ def copy_detection_files(
             dest_detected_visualization_path,
             dirs_exist_ok=True,
         )
-        print(f"Copied detection visualization to {dest_detected_visualization_path}")
+        logger.info(f"Copied detection visualization to {dest_detected_visualization_path}")
 
     else:
-        print(
+        logger.warning(
             f"Detected visualization path not provided: {detected_visualization_path}"
         )
 
@@ -298,6 +309,18 @@ def run():
     Main function to execute the smartspim segmentation
     in code ocean
     """
+    process_name = f"{__title__}"
+
+    setup_logging(
+        model={
+            "pipeline_name": __pipeline_name__,
+            "process_name": process_name,
+            "software_name": __title__,
+            "software_version": __version__,
+        }
+    )
+
+    start_time = time.monotonic()
 
     # Absolute paths of common Code Ocean folders
     data_folder = os.path.abspath("../data")
@@ -310,183 +333,222 @@ def run():
 
     # It is assumed that these files
     # will be in the data folder
-    print(f"Data folder: {data_folder}")
+    logger.info(f"Data folder: {data_folder}")
     required_input_elements = [str(smartspim_production_models)]
 
-    missing_files = validate_capsule_inputs(required_input_elements)
+    dataset_name = "unknown"
 
-    if len(missing_files):
-        raise ValueError(
-            f"We miss the following files in the capsule input: {missing_files}"
-        )
+    try:
+        missing_files = validate_capsule_inputs(required_input_elements)
 
-    pipeline_config, smartspim_dataset_name = get_data_config(
-        data_folder=data_folder,
-    )
-
-    classification_info = pipeline_config.get("segmentation")
-
-    if classification_info is None:
-        raise ValueError("Please, provide segmentation channels.")
-
-    channel_to_process = classification_info.get("channel")
-
-    # Note: The dispatcher capsule creates a single config with
-    # the channels. If the channel key does not exist, it means
-    # there are no segmentation channels splitted
-    if channel_to_process is not None:
-        # Folder where the detection files are stored from the previous step
-        proposal_folder = f"cell_{channel_to_process}"
-
-        # get default configs
-        mode = str(sys.argv[1:])
-        mode = mode.replace("[", "").replace("]", "").casefold()
-
-        # Getting inference model
-        model_config_path = smartspim_production_models.joinpath("config.json")
-
-        if not model_config_path.exists():
-            msg = (
-                f"Please, provide a config {model_config_path} "
-                "in the detection models folder."
+        if len(missing_files):
+            raise ValueError(
+                f"We miss the following files in the capsule input: {missing_files}"
             )
-            raise FileNotFoundError(msg)
 
-        model_config = utils.read_json_as_dict(str(model_config_path))
-        model_config["default_model"] = smartspim_production_models.joinpath(
-            model_config["default_model"]
-        )
-
-        model_metadata = utils.read_json_as_dict(
-            os.path.join(
-                os.path.dirname(model_config["default_model"]), "metadata.json"
-            )
-        )
-        model_config["metadata"] = model_metadata
-
-        # Setting up configuration for inference
-        default_config = dict()
-
-        default_config["model_config"] = model_config
-        print("Model config: ", default_config)
-
-        # add paths to default_config
-        default_config["input_data"] = os.path.abspath(
-            pipeline_config["segmentation"]["input_data"]
-        )
-        print("Files in path: ", os.listdir(default_config["input_data"]))
-
-        default_config["save_path"] = f"{results_folder}/{proposal_folder}"
-
-        # want to shutil segmentation data to results folder if detection was run
-        default_config["metadata_path"] = f"{results_folder}/{proposal_folder}/metadata"
-
-        print("Initial cell classification config: ", default_config)
-
-        # combine configs
-        chunk_size = int(classification_info.get("chunk_size", 128))
-        smartspim_config = set_up_pipeline_parameters(
-            pipeline_config=pipeline_config,
-            default_config=default_config,
-            chunk_size=chunk_size,
-        )
-
-        smartspim_config["name"] = smartspim_dataset_name
-
-        print("Final cell classification config: ", smartspim_config)
-
-        # allows for backwards compatibility and reprocessing
-        proposal_assets = [
-            "detected_cells.xml",
-            "detected_cells.csv",
-            "cell_likelihoods.csv",
-        ]
-
-        cell_proposals = np.empty(0, dtype=np.uint32)
-        found_proposals = False
-
-        for file in proposal_assets:
-            proposals_path = f"{data_folder}/{proposal_folder}/{file}"
-            if os.path.exists(proposals_path):
-                found_proposals = True
-                if os.path.splitext(proposals_path)[1] == ".xml":
-                    print(f"Reading proposals from {proposals_path}")
-                    cell_proposals = parse_cell_xml(proposals_path)
-                elif (
-                    os.path.exists(proposals_path)
-                    and os.path.splitext(proposals_path)[1] == ".csv"
-                ):
-                    print(f"Reading proposals from {proposals_path}")
-                    cell_proposals = parse_cell_csv(proposals_path)
-
-        if not found_proposals:
-            msg = (
-                f"Cell proposals not found in {data_folder}/{proposal_folder}. "
-                f"Expected one of: {proposal_assets}"
-            )
-            raise FileNotFoundError(msg)
-
-        # Copying detection files
-        copy_detection_files(
+        pipeline_config, smartspim_dataset_name = get_data_config(
             data_folder=data_folder,
-            results_folder=results_folder,
-            proposal_folder=proposal_folder,
         )
+        dataset_name = smartspim_dataset_name
 
-        # Downsample cells to the prediction scale
-        cols = ["Z", "Y", "X"]
-        cell_proposals = cell_proposals.copy()
-        cell_proposals[cols] = downsample_cell_locations(
-            coordinates=cell_proposals[cols].to_numpy(),
-            downscale_factors=[
-                int(smartspim_config["model_config"]["parameters"]["downsample"])
-            ]
-            * 3,
-        )
+        classification_info = pipeline_config.get("segmentation")
 
-        acquisition = utils.read_json_as_dict(f"{data_folder}/acquisition.json")
-        res = {}
+        if classification_info is None:
+            raise ValueError("Please, provide segmentation channels.")
 
-        axis_names = [axis["name"] for axis in acquisition["axes"]]
-        scales = [
-            float(scale)
-            for scale in acquisition["tiles"][0]["coordinate_transformations"][1][
-                "scale"
-            ]
-        ]
-        for name, scale in zip(axis_names, scales[::-1]):
-            res[name] = scale
+        channel_to_process = classification_info.get("channel")
 
-        neuroglancer_config = {
-            "base_url": "https://neuroglancer-demo.appspot.com/#!",
-            "crossSectionScale": 15,
-            "projectionScale": 16384,
-            "orientation": acquisition,
-            "dimensions": {
-                "z": [res["Z"] * 10**-6, "m"],
-                "y": [res["Y"] * 10**-6, "m"],
-                "x": [res["X"] * 10**-6, "m"],
-                "t": [0.001, "s"],
+        logger.info(
+            "Cell classification started",
+            extra={
+                "event_type": "stage_start",
+                "dataset_name": dataset_name,
+                "data_folder": data_folder,
+                "results_folder": results_folder,
+                "channel_to_process": channel_to_process,
             },
-            "rank": 3,
-            "gpuMemoryLimit": 1500000000,
-        }
-
-        print("Cell proposals: ", cell_proposals.shape)
-        print("Model params: ", smartspim_config["model_config"])
-
-        classification.main(
-            smartspim_config=smartspim_config,
-            neuroglancer_config=neuroglancer_config,
-            cell_proposals=cell_proposals,
         )
 
-    else:
-        print(f"No segmentation channel, pipeline config: {pipeline_config}")
-        utils.save_dict_as_json(
-            filename=f"{results_folder}/classification_processing_manifest_no_class.json",
-            dictionary=pipeline_config,
+        # Note: The dispatcher capsule creates a single config with
+        # the channels. If the channel key does not exist, it means
+        # there are no segmentation channels splitted
+        if channel_to_process is not None:
+            # Folder where the detection files are stored from the previous step
+            proposal_folder = f"cell_{channel_to_process}"
+
+            # get default configs
+            mode = str(sys.argv[1:])
+            mode = mode.replace("[", "").replace("]", "").casefold()
+
+            # Getting inference model
+            model_config_path = smartspim_production_models.joinpath("config.json")
+
+            if not model_config_path.exists():
+                msg = (
+                    f"Please, provide a config {model_config_path} "
+                    "in the detection models folder."
+                )
+                raise FileNotFoundError(msg)
+
+            model_config = utils.read_json_as_dict(str(model_config_path))
+            model_config["default_model"] = smartspim_production_models.joinpath(
+                model_config["default_model"]
+            )
+
+            model_metadata = utils.read_json_as_dict(
+                os.path.join(
+                    os.path.dirname(model_config["default_model"]), "metadata.json"
+                )
+            )
+            model_config["metadata"] = model_metadata
+
+            # Setting up configuration for inference
+            default_config = dict()
+
+            default_config["model_config"] = model_config
+            logger.debug("Model config: %s", default_config)
+
+            # add paths to default_config
+            default_config["input_data"] = os.path.abspath(
+                pipeline_config["segmentation"]["input_data"]
+            )
+            logger.debug("Files in path: %s", os.listdir(default_config["input_data"]))
+
+            default_config["save_path"] = f"{results_folder}/{proposal_folder}"
+
+            # want to shutil segmentation data to results folder if detection was run
+            default_config["metadata_path"] = (
+                f"{results_folder}/{proposal_folder}/metadata"
+            )
+
+            logger.debug("Initial cell classification config: %s", default_config)
+
+            # combine configs
+            chunk_size = int(classification_info.get("chunk_size", 128))
+            smartspim_config = set_up_pipeline_parameters(
+                pipeline_config=pipeline_config,
+                default_config=default_config,
+                chunk_size=chunk_size,
+            )
+
+            smartspim_config["name"] = smartspim_dataset_name
+
+            logger.debug("Final cell classification config: %s", smartspim_config)
+
+            # allows for backwards compatibility and reprocessing
+            proposal_assets = [
+                "detected_cells.xml",
+                "detected_cells.csv",
+                "cell_likelihoods.csv",
+            ]
+
+            cell_proposals = np.empty(0, dtype=np.uint32)
+            found_proposals = False
+
+            for file in proposal_assets:
+                proposals_path = f"{data_folder}/{proposal_folder}/{file}"
+                if os.path.exists(proposals_path):
+                    found_proposals = True
+                    if os.path.splitext(proposals_path)[1] == ".xml":
+                        logger.info("Reading proposals from %s", proposals_path)
+                        cell_proposals = parse_cell_xml(proposals_path)
+                    elif (
+                        os.path.exists(proposals_path)
+                        and os.path.splitext(proposals_path)[1] == ".csv"
+                    ):
+                        logger.info("Reading proposals from %s", proposals_path)
+                        cell_proposals = parse_cell_csv(proposals_path)
+
+            if not found_proposals:
+                msg = (
+                    f"Cell proposals not found in {data_folder}/{proposal_folder}. "
+                    f"Expected one of: {proposal_assets}"
+                )
+                raise FileNotFoundError(msg)
+
+            # Copying detection files
+            copy_detection_files(
+                data_folder=data_folder,
+                results_folder=results_folder,
+                proposal_folder=proposal_folder,
+            )
+
+            # Downsample cells to the prediction scale
+            cols = ["Z", "Y", "X"]
+            cell_proposals = cell_proposals.copy()
+            cell_proposals[cols] = downsample_cell_locations(
+                coordinates=cell_proposals[cols].to_numpy(),
+                downscale_factors=[
+                    int(smartspim_config["model_config"]["parameters"]["downsample"])
+                ]
+                * 3,
+            )
+
+            acquisition = utils.read_json_as_dict(f"{data_folder}/acquisition.json")
+            res = {}
+
+            axis_names = [axis["name"] for axis in acquisition["axes"]]
+            scales = [
+                float(scale)
+                for scale in acquisition["tiles"][0]["coordinate_transformations"][
+                    1
+                ]["scale"]
+            ]
+            for name, scale in zip(axis_names, scales[::-1]):
+                res[name] = scale
+
+            neuroglancer_config = {
+                "base_url": "https://neuroglancer-demo.appspot.com/#!",
+                "crossSectionScale": 15,
+                "projectionScale": 16384,
+                "orientation": acquisition,
+                "dimensions": {
+                    "z": [res["Z"] * 10**-6, "m"],
+                    "y": [res["Y"] * 10**-6, "m"],
+                    "x": [res["X"] * 10**-6, "m"],
+                    "t": [0.001, "s"],
+                },
+                "rank": 3,
+                "gpuMemoryLimit": 1500000000,
+            }
+
+            logger.debug("Cell proposals: %s", cell_proposals.shape)
+            logger.debug("Model params: %s", smartspim_config["model_config"])
+
+            classification.main(
+                smartspim_config=smartspim_config,
+                neuroglancer_config=neuroglancer_config,
+                cell_proposals=cell_proposals,
+            )
+
+        else:
+            logger.warning("No segmentation channel, pipeline config: %s", pipeline_config)
+            utils.save_dict_as_json(
+                filename=f"{results_folder}/classification_processing_manifest_no_class.json",
+                dictionary=pipeline_config,
+            )
+
+        duration_seconds = round(time.monotonic() - start_time, 3)
+        logger.info(
+            "Cell classification completed",
+            extra={
+                "event_type": "stage_complete",
+                "dataset_name": dataset_name,
+                "duration_seconds": duration_seconds,
+            },
         )
+    except Exception:
+        duration_seconds = round(time.monotonic() - start_time, 3)
+        logger.error(
+            "Cell classification failed",
+            exc_info=True,
+            extra={
+                "event_type": "stage_failure",
+                "dataset_name": dataset_name,
+                "duration_seconds": duration_seconds,
+            },
+        )
+        raise
 
 
 if __name__ == "__main__":
