@@ -223,7 +223,7 @@ def cell_classification(
     )
     downsample = smartspim_config["model_config"]["parameters"]["downsample"]
 
-    print(f" Image Path: {image_path} -- mask path: {mask_path} - scale: {downsample}")
+    logger.debug(f" Image Path: {image_path} -- mask path: {mask_path} - scale: {downsample}")
 
     device = None
 
@@ -248,8 +248,10 @@ def cell_classification(
         overlap_prediction_chunksize = (0, axis_pad, axis_pad, axis_pad)
         prediction_chunksize = (lazy_data.shape[-4],) + prediction_chunksize
 
-        logger.info(
-            f"Background path provided! New prediction chunksize: {prediction_chunksize} - New overlap: {overlap_prediction_chunksize}"
+        logger.debug(
+            "Background path provided! New prediction chunksize: %s - New overlap: %s",
+            prediction_chunksize,
+            overlap_prediction_chunksize,
         )
 
     else:
@@ -264,7 +266,7 @@ def cell_classification(
             .as_dask_array()
         )
 
-    print("Loaded lazy data: ", lazy_data)
+    logger.debug(f"Loaded lazy data: {lazy_data}")
     batch_size = 1
     dtype = np.float32
     zarr_data_loader, zarr_dataset = create_data_loader(
@@ -285,8 +287,10 @@ def cell_classification(
         locked_array=False,
     )
 
-    logger.info(
-        f"Running cell classification in chunked data. Prediction chunksize: {prediction_chunksize} - Overlap chunksize: {overlap_prediction_chunksize}"
+    logger.debug(
+        "Running cell classification in chunked data. Prediction chunksize: %s - Overlap chunksize: %s",
+        prediction_chunksize,
+        overlap_prediction_chunksize,
     )
 
     model_config = smartspim_config.get("model_config")
@@ -329,8 +333,8 @@ def cell_classification(
     ORIG_AXIS_ORDER = ["Z", "Y", "X"]
 
     total_batches = sum(zarr_dataset.internal_slice_sum) / batch_size
-    logger.info(
-        f"Total batches: {total_batches} - cell proposals: {cell_proposals.shape[0]}"
+    logger.debug(
+        "Total batches: %s - cell proposals: %s", total_batches, cell_proposals.shape[0]
     )
 
     if not torch.cuda.is_available():
@@ -341,7 +345,7 @@ def cell_classification(
     total_memory = torch.cuda.get_device_properties(device).total_memory
     target_memory = int(0.80 * total_memory)
 
-    logger.info(f"GPU total memory: {total_memory} - Target memory: {target_memory}")
+    logger.debug("GPU total memory: %s - Target memory: %s", total_memory, target_memory)
 
     block_size_bytes = (
         np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
@@ -357,8 +361,17 @@ def cell_classification(
     # Zarr at a downsampled resolution
     # Cell locations should be at this level
     for i, sample in enumerate(zarr_data_loader):
-        logger.info(
-            f"Batch [{i} | {total_batches}]: processed_cells {processed_cells} blocks: {curr_blocks} - Max blocks: {max_blocks} {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
+        logger.debug(
+            "Batch [%s | %s]: processed_cells %s blocks: %s - Max blocks: %s %s - Pinned?: %s - dtype: %s - device: %s",
+            i,
+            total_batches,
+            processed_cells,
+            curr_blocks,
+            max_blocks,
+            sample.batch_tensor.shape,
+            sample.batch_tensor.is_pinned(),
+            sample.batch_tensor.dtype,
+            sample.batch_tensor.device,
         )
 
         data_block = sample.batch_tensor[0, ...]  # .permute(-1, -2, -3, -4)
@@ -416,8 +429,10 @@ def cell_classification(
         )
 
         if proposals_in_block.shape[0]:
-            logger.info(
-                f"{proposals_in_block.shape[0]} proposals found in {global_pos_name}!"
+            logger.debug(
+                "%s proposals found in %s!",
+                proposals_in_block.shape[0],
+                global_pos_name,
             )
 
             locations_in_block = proposals_in_block[["Z", "Y", "X"]].values
@@ -455,7 +470,7 @@ def cell_classification(
                 picked_intensities.append(intensities)
                 curr_blocks += 1
         else:
-            logger.info(f"No proposals found in {global_pos_name}!")
+            logger.debug("No proposals found in %s!", global_pos_name)
 
         if (
             curr_blocks >= max_blocks
@@ -469,7 +484,7 @@ def cell_classification(
                     "Shapes between blocks and proposals are not the same:"
                     f"blocks: {blocks_to_classify.shape} - Proposals: {picked_proposals.shape}"
                 )
-                ValueError(error)
+                raise ValueError(error)
 
             previous_cell_count = processed_cells
             processed_cells += picked_proposals.shape[0]
@@ -520,7 +535,7 @@ def cell_classification(
                     "Shapes between blocks and predictions are not the same:"
                     f"blocks: {blocks_to_classify.shape} - Proposals: {predictions_raw.shape}"
                 )
-                ValueError(error)
+                raise ValueError(error)
 
             cell_likelihood = []
             for idx, proposal in enumerate(picked_proposals):
@@ -579,7 +594,7 @@ def cell_classification(
                 "Shapes between blocks and proposals are not the same:"
                 f"blocks: {blocks_to_classify.shape} - Proposals: {picked_proposals.shape}"
             )
-            ValueError(error)
+            raise ValueError(error)
 
         previous_cell_count = processed_cells
         processed_cells += picked_proposals.shape[0]
@@ -614,7 +629,7 @@ def cell_classification(
                 "Shapes between blocks and predictions are not the same:"
                 f"blocks: {blocks_to_classify.shape} - Proposals: {predictions_raw.shape}"
             )
-            ValueError(error)
+            raise ValueError(error)
 
         cell_likelihood = []
         for idx, proposal in enumerate(picked_proposals):
@@ -962,7 +977,7 @@ def generate_neuroglancer_link(
         smartspim_config["save_path"], "visualization/detected_precomputed"
     )
     utils.create_folder(output_precomputed)
-    print(f"Output cells precomputed: {output_precomputed}")
+    logger.debug(f"Output cells precomputed: {output_precomputed}")
 
     utils.generate_precomputed_cells(
         cells_df, precompute_path=output_precomputed, configs=ng_configs
@@ -1067,8 +1082,7 @@ def main(
 
     utils.create_folder(smartspim_config["metadata_path"])
 
-    # Logger pointing everything to the metadata path
-    logger = utils.create_logger(output_log_path=smartspim_config["metadata_path"])
+    logger = logging.getLogger(__name__)
     utils.print_system_information(logger)
 
     # Tracking compute resources
