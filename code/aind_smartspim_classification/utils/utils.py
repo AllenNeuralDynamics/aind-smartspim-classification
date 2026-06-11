@@ -152,40 +152,6 @@ def execute_command_helper(
         raise subprocess.CalledProcessError(return_code, command)
 
 
-def create_logger(output_log_path: PathLike):
-    """
-    Creates a logger that generates
-    output logs to a specific path.
-
-    Parameters
-    ------------
-    output_log_path: PathLike
-        Path where the log is going
-        to be stored
-
-    Returns
-    -----------
-    logging.Logger
-        Created logger pointing to
-        the file path.
-    """
-
-    CURR_DATE_TIME = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    LOGS_FILE = f"{output_log_path}/classification_log_{CURR_DATE_TIME}.log"
-
-    file_handler = logging.FileHandler(LOGS_FILE, "a")
-    file_handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s - %(levelname)s : %(message)s", datefmt="%Y-%m-%d %H:%M"
-        )
-    )
-
-    logger = logging.getLogger(__name__)
-    logger.addHandler(file_handler)
-
-    return logger
-
-
 def read_json_as_dict(filepath: str):
     """
     Reads a json as dictionary.

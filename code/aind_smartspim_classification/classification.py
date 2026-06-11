@@ -1082,8 +1082,7 @@ def main(
 
     utils.create_folder(smartspim_config["metadata_path"])
 
-    # Logger pointing everything to the metadata path
-    logger = utils.create_logger(output_log_path=smartspim_config["metadata_path"])
+    logger = logging.getLogger(__name__)
     utils.print_system_information(logger)
 
     # Tracking compute resources
