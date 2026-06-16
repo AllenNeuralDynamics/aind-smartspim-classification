@@ -7,12 +7,15 @@ I/O contracts that can be exercised without a GPU or Zarr dataset.
 
 import json
 import os
+import time
 from pathlib import Path
 from unittest.mock import patch
 
 import psutil
 import pytest
+from aind_data_schema.core.processing import ResourceUsage
 from aind_smartspim_classification.utils.utils import (
+    ResourceMonitor,
     check_path_instance,
     create_folder,
     get_cpu_limit,
@@ -172,6 +175,35 @@ class TestGetMemoryLimitBytes:
         # Should not raise; result is some valid int
         assert isinstance(result, int)
         assert result > 0
+
+
+class TestResourceMonitor:
+    """Smoke tests for ResourceMonitor — no GPU required (pynvml failure handled gracefully)."""
+
+    def test_collects_cpu_and_ram_samples(self):
+        """ResourceMonitor should collect at least one CPU and RAM sample after a short run."""
+        monitor = ResourceMonitor(interval_seconds=0.1).start()
+        time.sleep(0.3)
+        monitor.stop()
+        usage = monitor.to_resource_usage(cpu_cores=2)
+        assert isinstance(usage, ResourceUsage)
+        assert len(usage.cpu_usage) > 0
+        assert len(usage.ram_usage) > 0
+
+    def test_context_manager(self):
+        """ResourceMonitor should work as a context manager."""
+        with ResourceMonitor(interval_seconds=0.1) as monitor:
+            time.sleep(0.2)
+        usage = monitor.to_resource_usage()
+        assert isinstance(usage, ResourceUsage)
+        assert len(usage.cpu_usage) > 0
+
+    def test_cpu_cores_passed_through(self):
+        """cpu_cores argument should be reflected in ResourceUsage."""
+        with ResourceMonitor(interval_seconds=0.1) as monitor:
+            time.sleep(0.1)
+        usage = monitor.to_resource_usage(cpu_cores=4)
+        assert usage.cpu_cores == 4
 
 
 class TestCheckPathInstance:

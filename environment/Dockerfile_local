@@ -40,7 +40,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir \
         aind-large-scale-prediction==1.0.0 \
-        aind-data-schema==1.0.0 \
+        aind-data-schema==2.8.0 \
+        "aind-data-schema-models>=5.7.1,<6" \
+        pynvml \
         aind-ng-link==1.0.6 \
         psutil==5.9.8 \
         jupyter-server-proxy==3.2.2 \

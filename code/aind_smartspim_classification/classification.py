@@ -9,7 +9,7 @@ import json
 import logging
 import multiprocessing
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from glob import glob
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -19,7 +19,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-from aind_data_schema.core.processing import DataProcess, ProcessName
+from aind_data_schema.components.identifiers import Code
+from aind_data_schema.core.processing import DataProcess, ProcessStage
+from aind_data_schema_models.process_names import ProcessName
 from aind_large_scale_prediction.generator.dataset import create_data_loader
 from aind_large_scale_prediction.generator.utils import (
     concatenate_lazy_data,
@@ -31,7 +33,14 @@ from natsort import natsorted
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import argrelmin
 
-from .__init__ import __maintainers__, __pipeline_version__, __version__
+from .__init__ import (
+    __maintainers__,
+    __pipeline_name__,
+    __pipeline_version__,
+    __title__,
+    __url__,
+    __version__,
+)
 from ._shared.types import PathLike
 from .model.layers import GroupNormalization3D, ReduceMax3D, ReduceMean3D
 from .model.losses import BinaryFocalLoss, CategoricalFocalLoss
@@ -207,6 +216,7 @@ def cell_classification(
         a single call. prediction_chunksize > super_chunksize.
     """
     start_date_time = datetime.now()
+    resource_monitor = utils.ResourceMonitor(interval_seconds=1.0).start()
 
     data_processes = []
 
@@ -673,28 +683,37 @@ def cell_classification(
         picked_intensities = []
         blocks_to_classify = []
 
-    end_date_time = datetime.now()
+    resource_monitor.stop()
+    end_date_time = datetime.now(timezone.utc)
+    start_date_time = start_date_time.replace(tzinfo=timezone.utc)
 
     data_processes.append(
         DataProcess(
-            name=ProcessName.IMAGE_CELL_SEGMENTATION,
-            software_version=__version__,
+            process_type=ProcessName.IMAGE_CELL_CLASSIFICATION,
+            name=f"Image cell classification - {Path(image_path).name}",
+            stage=ProcessStage.PROCESSING,
+            code=Code(url=__url__, name=__title__, version=__version__),
+            experimenters=__maintainers__,
+            pipeline_name=__pipeline_name__,
             start_date_time=start_date_time,
             end_date_time=end_date_time,
-            input_location=str(image_path),
-            output_location=str(smartspim_config["metadata_path"]),
-            outputs={},
-            code_url="https://github.com/AllenNeuralDynamics/aind-smartspim-classification",
-            code_version=__version__,
-            parameters={
-                "image_path": str(image_path),
-                "background_path": str(background_path),
-                "mask_path": str(mask_path),
-                "smartspim_cell_config": smartspim_config,
-                "target_size_mb": target_size_mb,
-                "prediction_chunksize": prediction_chunksize,
-                "overlap_prediction_chunksize": overlap_prediction_chunksize,
+            output_path=str(smartspim_config["metadata_path"]),
+            output_parameters={
+                "input_location": str(image_path),
+                "parameters": {
+                    "image_path": str(image_path),
+                    "background_path": str(background_path),
+                    "mask_path": str(mask_path),
+                    "smartspim_cell_config": smartspim_config,
+                    "target_size_mb": target_size_mb,
+                    "prediction_chunksize": prediction_chunksize,
+                    "overlap_prediction_chunksize": overlap_prediction_chunksize,
+                },
+                "duration_seconds": (end_date_time - start_date_time).total_seconds(),
             },
+            resources=resource_monitor.to_resource_usage(
+                cpu_cores=int(utils.get_cpu_limit())
+            ),
             notes=f"Classifying channel in path: {image_path}",
         )
     )
@@ -1142,8 +1161,9 @@ def main(
     utils.generate_processing(
         data_processes=data_processes,
         dest_processing=str(smartspim_config["metadata_path"]),
-        processor_full_name=__maintainers__[-1],
+        pipeline_name=__pipeline_name__,
         pipeline_version=__pipeline_version__,
+        pipeline_url=__url__,
     )
 
     # Getting tracked resources and plotting image
