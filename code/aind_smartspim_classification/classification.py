@@ -216,7 +216,7 @@ def cell_classification(
         a single call. prediction_chunksize > super_chunksize.
     """
     start_date_time = datetime.now()
-    resource_monitor = utils.ResourceMonitor(interval_seconds=1.0).start()
+    resource_monitor = utils.ResourceMonitor(interval_seconds=30.0).start()
 
     data_processes = []
 
