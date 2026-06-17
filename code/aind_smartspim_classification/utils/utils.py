@@ -15,8 +15,9 @@ import os
 import platform
 import struct
 import subprocess
+import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from multiprocessing.managers import BaseManager, NamespaceProxy
 from pathlib import Path
 from typing import List, Optional
@@ -26,11 +27,82 @@ import dask.array as da
 import matplotlib.pyplot as plt
 import numpy as np
 import psutil
-from aind_data_schema.core.processing import DataProcess, PipelineProcess, Processing
+from aind_data_schema.components.identifiers import Code
+from aind_data_schema.core.processing import (
+    DataProcess,
+    Processing,
+    ResourceTimestamped,
+    ResourceUsage,
+)
+from aind_data_schema_models.units import MemoryUnit
 from scipy import ndimage as ndi
 from scipy.signal import argrelmin
 
 from .._shared.types import PathLike
+
+
+class ResourceMonitor:
+    """Thread-based CPU/RAM/GPU resource monitor for DataProcess resource tracking."""
+
+    def __init__(self, interval_seconds: Optional[float] = 1.0):
+        self._interval = interval_seconds
+        self._cpu_usage: List[ResourceTimestamped] = []
+        self._ram_usage: List[ResourceTimestamped] = []
+        self._gpu_usage: List[ResourceTimestamped] = []
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._gpu_available = False
+
+    def _run(self) -> None:
+        try:
+            import pynvml
+
+            pynvml.nvmlInit()
+            self._gpu_available = True
+        except Exception:
+            self._gpu_available = False
+        while not self._stop_event.is_set():
+            now = datetime.now(timezone.utc)
+            self._cpu_usage.append(
+                ResourceTimestamped(timestamp=now, usage=psutil.cpu_percent(interval=None))
+            )
+            self._ram_usage.append(
+                ResourceTimestamped(timestamp=now, usage=psutil.virtual_memory().percent)
+            )
+            if self._gpu_available:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                self._gpu_usage.append(
+                    ResourceTimestamped(timestamp=now, usage=float(util.gpu))
+                )
+            self._stop_event.wait(self._interval)
+
+    def start(self) -> "ResourceMonitor":
+        psutil.cpu_percent(interval=None)  # prime the first sample
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        self._thread.join(timeout=self._interval + 1)
+
+    def __enter__(self) -> "ResourceMonitor":
+        return self.start()
+
+    def __exit__(self, *exc_info) -> None:
+        self.stop()
+
+    def to_resource_usage(self, cpu_cores: Optional[int] = None) -> ResourceUsage:
+        return ResourceUsage(
+            os=platform.system(),
+            architecture=platform.machine(),
+            cpu_cores=cpu_cores,
+            system_memory=round(psutil.virtual_memory().total / (1024**3), 2),
+            system_memory_unit=MemoryUnit.GB,
+            cpu_usage=self._cpu_usage,
+            ram_usage=self._ram_usage,
+            gpu_usage=self._gpu_usage if self._gpu_available else None,
+        )
 
 
 def find_good_blocks(img, counts, chunk, ds=3):
@@ -477,44 +549,17 @@ def generate_precomputed_cells(cells, precompute_path, configs):
 def generate_processing(
     data_processes: List[DataProcess],
     dest_processing: PathLike,
-    processor_full_name: str,
+    pipeline_name: str,
     pipeline_version: str,
-):
-    """
-    Generates data description for the output folder.
-
-    Parameters
-    ------------------------
-
-    data_processes: List[dict]
-        List with the processes aplied in the pipeline.
-
-    dest_processing: PathLike
-        Path where the processing file will be placed.
-
-    processor_full_name: str
-        Person in charged of running the pipeline
-        for this data asset
-
-    pipeline_version: str
-        Terastitcher pipeline version
-
-    """
-    # flake8: noqa: E501
-    processing_pipeline = PipelineProcess(
+    pipeline_url: str,
+) -> None:
+    """Generates processing.json for the output folder."""
+    pipelines = [Code(url=pipeline_url, name=pipeline_name, version=pipeline_version)]
+    processing = Processing.create_with_sequential_process_graph(
         data_processes=data_processes,
-        processor_full_name=processor_full_name,
-        pipeline_version=pipeline_version,
-        pipeline_url="https://github.com/AllenNeuralDynamics/aind-smartspim-pipeline",
-        note="Metadata for classification step",
+        pipelines=pipelines,
+        notes="Classification metadata for SmartSPIM cell proposals",
     )
-
-    processing = Processing(
-        processing_pipeline=processing_pipeline,
-        notes="This processing only contains metadata of cell segmentation \
-            and needs to be compiled with other steps at the end",
-    )
-
     processing.write_standard_file(output_directory=dest_processing)
 
 

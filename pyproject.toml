@@ -12,9 +12,11 @@ authors = [
     { name = "Camilo Laiton", email = "camilo.laiton@alleninstitute.org" },
     { name = "Nicholas Lusk", email = "nicholas.lusk@alleninstitute.org" },
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
-    "aind-data-schema==1.0.0",
+    "aind-data-schema==2.8.0",
+    "aind-data-schema-models>=5.7.1,<6",
+    "pynvml",
     "aind-ng-link==1.0.6",
     "cellfinder>=1.0.0",
     "keras>=3.9.2",
@@ -59,7 +61,7 @@ show_missing = true
 
 [tool.black]
 line-length = 88
-target-version = ["py39"]
+target-version = ["py310"]
 
 [tool.isort]
 profile = "black"
