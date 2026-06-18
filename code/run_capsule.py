@@ -16,7 +16,7 @@ from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import torch
-from schlog import setup_logging
+from log_schema import setup_logging
 
 from aind_smartspim_classification import (
     __pipeline_name__,
@@ -309,7 +309,7 @@ def run():
     Main function to execute the smartspim segmentation
     in code ocean
     """
-    process_name = f"{__title__}"
+    process_name = __title__
 
     setup_logging(
         model={
