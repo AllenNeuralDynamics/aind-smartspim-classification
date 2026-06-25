@@ -102,6 +102,7 @@ class ResourceMonitor:
             cpu_usage=self._cpu_usage,
             ram_usage=self._ram_usage,
             gpu_usage=self._gpu_usage if self._gpu_available else None,
+            ram_unit=MemoryUnit.GB,
         )
 
 
