@@ -24,7 +24,7 @@ from aind_smartspim_classification import (
     __version__,
     classification,
 )
-from aind_smartspim_classification.utils import utils
+from aind_smartspim_classification.utils import metadata_compat, utils
 
 logger = logging.getLogger(__name__)
 
@@ -485,23 +485,14 @@ def run():
             )
 
             acquisition = utils.read_json_as_dict(f"{data_folder}/acquisition.json")
-            res = {}
-
-            axis_names = [axis["name"] for axis in acquisition["axes"]]
-            scales = [
-                float(scale)
-                for scale in acquisition["tiles"][0]["coordinate_transformations"][
-                    1
-                ]["scale"]
-            ]
-            for name, scale in zip(axis_names, scales[::-1]):
-                res[name] = scale
+            x_res, y_res, z_res = metadata_compat.get_voxel_resolution(acquisition)
+            res = {"X": x_res, "Y": y_res, "Z": z_res}
 
             neuroglancer_config = {
                 "base_url": "https://neuroglancer-demo.appspot.com/#!",
                 "crossSectionScale": 15,
                 "projectionScale": 16384,
-                "orientation": acquisition,
+                "orientation": metadata_compat.normalize_orientation(acquisition),
                 "dimensions": {
                     "z": [res["Z"] * 10**-6, "m"],
                     "y": [res["Y"] * 10**-6, "m"],
