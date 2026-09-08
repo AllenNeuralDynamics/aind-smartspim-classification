@@ -24,7 +24,7 @@ from aind_smartspim_classification import (
     __version__,
     classification,
 )
-from aind_smartspim_classification.utils import utils
+from aind_smartspim_classification.utils import metadata_compat, utils
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +306,7 @@ def copy_detection_files(
 
 def run():
     """
-    Main function to execute the smartspim segmentation
+    Main function to execute the smartspim cell classification
     in code ocean
     """
     process_name = __title__
@@ -336,9 +336,20 @@ def run():
     logger.info(f"Data folder: {data_folder}")
     required_input_elements = [str(smartspim_production_models)]
 
-    dataset_name = "unknown"
+    dataset_name = None
+    smartspim_dataset_name = None
+    channel_to_process = None
 
     try:
+        logger.info(
+            "Cell classification started",
+            extra={
+                "event_type": "stage_start",
+                "data_folder": data_folder,
+                "results_folder": results_folder,
+            },
+        )
+
         missing_files = validate_capsule_inputs(required_input_elements)
 
         if len(missing_files):
@@ -349,23 +360,26 @@ def run():
         pipeline_config, smartspim_dataset_name = get_data_config(
             data_folder=data_folder,
         )
-        dataset_name = smartspim_dataset_name
+        dataset_name = metadata_compat.get_raw_dataset_name(smartspim_dataset_name)
 
+        # The classification channels come from the manifest's segmentation section
         classification_info = pipeline_config.get("segmentation")
 
         if classification_info is None:
-            raise ValueError("Please, provide segmentation channels.")
+            raise ValueError(
+                "Please, provide the channels to classify in the "
+                "processing manifest's segmentation section."
+            )
 
         channel_to_process = classification_info.get("channel")
 
         logger.info(
-            "Cell classification started",
+            f"Processing derived asset {smartspim_dataset_name} - channel {channel_to_process}",
             extra={
-                "event_type": "stage_start",
+                "event_type": "dataset_resolved",
                 "dataset_name": dataset_name,
-                "data_folder": data_folder,
-                "results_folder": results_folder,
-                "channel_to_process": channel_to_process,
+                "asset_name": smartspim_dataset_name,
+                "channel": channel_to_process,
             },
         )
 
@@ -485,23 +499,14 @@ def run():
             )
 
             acquisition = utils.read_json_as_dict(f"{data_folder}/acquisition.json")
-            res = {}
-
-            axis_names = [axis["name"] for axis in acquisition["axes"]]
-            scales = [
-                float(scale)
-                for scale in acquisition["tiles"][0]["coordinate_transformations"][
-                    1
-                ]["scale"]
-            ]
-            for name, scale in zip(axis_names, scales[::-1]):
-                res[name] = scale
+            x_res, y_res, z_res = metadata_compat.get_voxel_resolution(acquisition)
+            res = {"X": x_res, "Y": y_res, "Z": z_res}
 
             neuroglancer_config = {
                 "base_url": "https://neuroglancer-demo.appspot.com/#!",
                 "crossSectionScale": 15,
                 "projectionScale": 16384,
-                "orientation": acquisition,
+                "orientation": metadata_compat.normalize_orientation(acquisition),
                 "dimensions": {
                     "z": [res["Z"] * 10**-6, "m"],
                     "y": [res["Y"] * 10**-6, "m"],
@@ -522,7 +527,11 @@ def run():
             )
 
         else:
-            logger.warning("No segmentation channel, pipeline config: %s", pipeline_config)
+            logger.warning(
+                "No channel to classify was provided in the processing manifest",
+                extra={"dataset_name": dataset_name, "status": "no_channels"},
+            )
+            logger.debug("Pipeline config without classification channel: %s", pipeline_config)
             utils.save_dict_as_json(
                 filename=f"{results_folder}/classification_processing_manifest_no_class.json",
                 dictionary=pipeline_config,
@@ -534,17 +543,22 @@ def run():
             extra={
                 "event_type": "stage_complete",
                 "dataset_name": dataset_name,
+                "asset_name": smartspim_dataset_name,
+                "channel": channel_to_process,
                 "duration_seconds": duration_seconds,
             },
         )
-    except Exception:
+    except Exception as e:
         duration_seconds = round(time.monotonic() - start_time, 3)
         logger.error(
             "Cell classification failed",
             exc_info=True,
             extra={
                 "event_type": "stage_failure",
+                "error": f"{type(e).__name__}: {e}",
                 "dataset_name": dataset_name,
+                "asset_name": smartspim_dataset_name,
+                "channel": channel_to_process,
                 "duration_seconds": duration_seconds,
             },
         )
