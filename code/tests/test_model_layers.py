@@ -11,7 +11,6 @@ import pytest
 
 os.environ.setdefault("KERAS_BACKEND", "torch")
 
-import keras  # noqa: E402
 from aind_smartspim_classification.model.layers import (  # noqa: E402
     GroupNormalization3D,
     ReduceMax3D,
@@ -136,9 +135,7 @@ class TestReduceMax3D:
         """Channel-max must always be >= channel-mean for non-negative inputs."""
         layer_max = ReduceMax3D()
         layer_mean = ReduceMean3D()
-        x = np.abs(np.random.default_rng(3).normal(0, 1, (2, D, H, W, C))).astype(
-            np.float32
-        )
+        x = np.abs(np.random.default_rng(3).normal(0, 1, (2, D, H, W, C))).astype(np.float32)
         y_max = np.array(layer_max(x))
         y_mean = np.array(layer_mean(x))
         assert np.all(y_max >= y_mean - 1e-6)

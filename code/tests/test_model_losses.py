@@ -97,9 +97,7 @@ class TestCategoricalFocalLoss:
         """Perfect one-hot predictions should yield near-zero loss."""
         loss_fn = CategoricalFocalLoss(gamma=2.0, alpha=0.25)
         y_true = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
-        y_pred = np.array(
-            [[0.998, 0.001, 0.001], [0.001, 0.998, 0.001]], dtype=np.float32
-        )
+        y_pred = np.array([[0.998, 0.001, 0.001], [0.001, 0.998, 0.001]], dtype=np.float32)
         loss = _np(loss_fn(y_true, y_pred))
         assert float(np.mean(loss)) < 0.01
 
@@ -116,12 +114,8 @@ class TestCategoricalFocalLoss:
         y_true = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
         y_pred = np.array([[0.7, 0.3], [0.4, 0.6]], dtype=np.float32)
 
-        loss_scalar = float(
-            _np(ops.mean(CategoricalFocalLoss(alpha=0.25)(y_true, y_pred)))
-        )
-        loss_list = float(
-            _np(ops.mean(CategoricalFocalLoss(alpha=[0.1, 0.9])(y_true, y_pred)))
-        )
+        loss_scalar = float(_np(ops.mean(CategoricalFocalLoss(alpha=0.25)(y_true, y_pred))))
+        loss_list = float(_np(ops.mean(CategoricalFocalLoss(alpha=[0.1, 0.9])(y_true, y_pred))))
         # They should differ because alpha balances are different
         assert loss_scalar != pytest.approx(loss_list, rel=1e-2)
 

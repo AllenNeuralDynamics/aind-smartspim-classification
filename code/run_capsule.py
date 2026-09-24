@@ -16,8 +16,6 @@ from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import torch
-from log_schema import setup_logging
-
 from aind_smartspim_classification import (
     __pipeline_name__,
     __title__,
@@ -25,6 +23,7 @@ from aind_smartspim_classification import (
     classification,
 )
 from aind_smartspim_classification.utils import metadata_compat, utils
+from log_schema import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -114,21 +113,15 @@ def get_data_config(
             glob(f"{data_folder}/{processing_manifest_path}")[0]
         )
     except (IndexError, KeyError):
-        derivatives_dict = utils.read_json_as_dict(
-            glob(f"{data_folder}/processing_manifest_*")[0]
-        )
-    data_description_dict = utils.read_json_as_dict(
-        f"{data_folder}/{data_description_path}"
-    )
+        derivatives_dict = utils.read_json_as_dict(glob(f"{data_folder}/processing_manifest_*")[0])
+    data_description_dict = utils.read_json_as_dict(f"{data_folder}/{data_description_path}")
 
     smartspim_dataset = data_description_dict["name"]
 
     return derivatives_dict, smartspim_dataset
 
 
-def set_up_pipeline_parameters(
-    pipeline_config: dict, default_config: dict, chunk_size: int = 128
-):
+def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict, chunk_size: int = 128):
     """
     Sets up smartspim classification parameters that come from the
     pipeline configuration.
@@ -156,9 +149,7 @@ def set_up_pipeline_parameters(
         Dictionary with the combined parameters
     """
 
-    default_config["input_channel"] = (
-        f"{pipeline_config['segmentation']['channel']}.zarr"
-    )
+    default_config["input_channel"] = f"{pipeline_config['segmentation']['channel']}.zarr"
     default_config["background_channel"] = (
         f"{pipeline_config['segmentation']['background_channel']}.zarr"
     )
@@ -269,19 +260,13 @@ def copy_detection_files(
     detected_metadata_path = f"{data_folder}/{proposal_folder}/metadata"
     detected_visualization_path = f"{data_folder}/{proposal_folder}/visualization"
 
-    dest_detected_metadata_path = (
-        f"{results_folder}/{proposal_folder}/proposals/metadata"
-    )
-    dest_detected_visualization_path = (
-        f"{results_folder}/{proposal_folder}/proposals/visualization"
-    )
+    dest_detected_metadata_path = f"{results_folder}/{proposal_folder}/proposals/metadata"
+    dest_detected_visualization_path = f"{results_folder}/{proposal_folder}/proposals/visualization"
 
     # If detected metadata exists, we should copy it
     if os.path.exists(detected_metadata_path):
         utils.create_folder(dest_dir=os.path.dirname(dest_detected_metadata_path))
-        shutil.copytree(
-            detected_metadata_path, dest_detected_metadata_path, dirs_exist_ok=True
-        )
+        shutil.copytree(detected_metadata_path, dest_detected_metadata_path, dirs_exist_ok=True)
         logger.info(f"Copied detection metadata to {dest_detected_metadata_path}")
 
     else:
@@ -299,9 +284,7 @@ def copy_detection_files(
         logger.info(f"Copied detection visualization to {dest_detected_visualization_path}")
 
     else:
-        logger.warning(
-            f"Detected visualization path not provided: {detected_visualization_path}"
-        )
+        logger.warning(f"Detected visualization path not provided: {detected_visualization_path}")
 
 
 def run():
@@ -325,9 +308,7 @@ def run():
     # Absolute paths of common Code Ocean folders
     data_folder = os.path.abspath("../data")
     results_folder = os.path.abspath("../results")
-    smartspim_production_models = Path(data_folder).joinpath(
-        "smartspim_production_models"
-    )
+    smartspim_production_models = Path(data_folder).joinpath("smartspim_production_models")
 
     # scratch_folder = os.path.abspath("../scratch")
 
@@ -353,9 +334,7 @@ def run():
         missing_files = validate_capsule_inputs(required_input_elements)
 
         if len(missing_files):
-            raise ValueError(
-                f"We miss the following files in the capsule input: {missing_files}"
-            )
+            raise ValueError(f"We miss the following files in the capsule input: {missing_files}")
 
         pipeline_config, smartspim_dataset_name = get_data_config(
             data_folder=data_folder,
@@ -399,8 +378,7 @@ def run():
 
             if not model_config_path.exists():
                 msg = (
-                    f"Please, provide a config {model_config_path} "
-                    "in the detection models folder."
+                    f"Please, provide a config {model_config_path} in the detection models folder."
                 )
                 raise FileNotFoundError(msg)
 
@@ -410,9 +388,7 @@ def run():
             )
 
             model_metadata = utils.read_json_as_dict(
-                os.path.join(
-                    os.path.dirname(model_config["default_model"]), "metadata.json"
-                )
+                os.path.join(os.path.dirname(model_config["default_model"]), "metadata.json")
             )
             model_config["metadata"] = model_metadata
 
@@ -431,9 +407,7 @@ def run():
             default_config["save_path"] = f"{results_folder}/{proposal_folder}"
 
             # want to shutil segmentation data to results folder if detection was run
-            default_config["metadata_path"] = (
-                f"{results_folder}/{proposal_folder}/metadata"
-            )
+            default_config["metadata_path"] = f"{results_folder}/{proposal_folder}/metadata"
 
             logger.debug("Initial cell classification config: %s", default_config)
 

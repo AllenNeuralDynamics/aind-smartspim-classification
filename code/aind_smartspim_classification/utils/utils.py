@@ -72,9 +72,7 @@ class ResourceMonitor:
             if self._gpu_available:
                 handle = pynvml.nvmlDeviceGetHandleByIndex(0)
                 util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                self._gpu_usage.append(
-                    ResourceTimestamped(timestamp=now, usage=float(util.gpu))
-                )
+                self._gpu_usage.append(ResourceTimestamped(timestamp=now, usage=float(util.gpu)))
             self._stop_event.wait(self._interval)
 
     def start(self) -> "ResourceMonitor":
@@ -214,9 +212,7 @@ def execute_command_helper(
     if print_command:
         print(command)
 
-    popen = subprocess.Popen(
-        command, stdout=subprocess.PIPE, universal_newlines=True, shell=True
-    )
+    popen = subprocess.Popen(command, stdout=subprocess.PIPE, universal_newlines=True, shell=True)
     for stdout_line in iter(popen.stdout.readline, ""):
         yield str(stdout_line).strip()
     popen.stdout.close()
@@ -319,9 +315,7 @@ def volume_orientation(acquisition_params: dict):
     elif acquired == "LAI":
         orientation = [0.0, np.cos(np.pi / 4), -np.cos(np.pi / 4), 0.0]
     else:
-        raise ValueError(
-            f"Acquisition orientation: {acquired} has unknown NG parameters"
-        )
+        raise ValueError(f"Acquisition orientation: {acquired} has unknown NG parameters")
 
     return orientation
 
@@ -491,9 +485,7 @@ def generate_precomputed_cells(cells, precompute_path, configs):
 
     metadata = {
         "@type": "neuroglancer_annotations_v1",
-        "dimensions": dict(
-            (key, configs["dimensions"][key]) for key in ("z", "y", "x")
-        ),
+        "dimensions": dict((key, configs["dimensions"][key]) for key in ("z", "y", "x")),
         "lower_bound": [float(x) for x in l_bounds],
         "upper_bound": [float(x) for x in u_bounds],
         "annotation_type": "point",
@@ -730,9 +722,7 @@ def print_system_information(logger: logging.Logger):
     logger.info(f"SLURM ID: {slurm_id}")
     logger.info(f"SLURM GPUs: {os.environ.get('SLURM_JOB_GPUS')}")
     logger.info(f"SLURM CPUs: {os.environ.get('SLURM_JOB_CPUS_PER_NODE')}")
-    logger.info(
-        f"SLURM variables {[( k, v ) for k, v in os.environ.items() if 'SLURM' in k]}"
-    )
+    logger.info(f"SLURM variables {[(k, v) for k, v in os.environ.items() if 'SLURM' in k]}")
 
     logger.info(f"{sep} System Information {sep}")
     uname = platform.uname()
@@ -747,9 +737,7 @@ def print_system_information(logger: logging.Logger):
     logger.info(f"{sep} Boot Time {sep}")
     boot_time_timestamp = psutil.boot_time()
     bt = datetime.fromtimestamp(boot_time_timestamp)
-    logger.info(
-        f"Boot Time: {bt.year}/{bt.month}/{bt.day} {bt.hour}:{bt.minute}:{bt.second}"
-    )
+    logger.info(f"Boot Time: {bt.year}/{bt.month}/{bt.day} {bt.hour}:{bt.minute}:{bt.second}")
 
     # CPU info
     logger.info(f"{sep} CPU Info {sep}")
@@ -840,7 +828,7 @@ def get_cpu_limit():
 
         container_cpus = cfs_quota_us // cfs_period_us
 
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         container_cpus = 0
 
     # For physical machine, the `cfs_quota_us` could be '-1'
@@ -919,9 +907,7 @@ def check_path_instance(obj: object) -> bool:
     return False
 
 
-def save_dict_as_json(
-    filename: str, dictionary: dict, verbose: Optional[bool] = False
-) -> None:
+def save_dict_as_json(filename: str, dictionary: dict, verbose: Optional[bool] = False) -> None:
     """
     Saves a dictionary as a json file.
 

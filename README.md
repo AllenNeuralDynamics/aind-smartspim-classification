@@ -1,5 +1,7 @@
 # aind-smartspim-classification
 
+![support](https://img.shields.io/badge/support-supported-brightgreen)
+
 Code for classifying the cell candidate outputs from [aind-smartspim-segmentation](https://github.com/AllenNeuralDynamics/aind-smartspim-segmentation) within the SmartSPIM pipeline.
 It uses the [aind-large-scale-prediction](https://github.com/AllenNeuralDynamics/aind-large-scale-prediction) package to efficiently process large amounts of image data.
 

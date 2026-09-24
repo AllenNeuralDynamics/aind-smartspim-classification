@@ -42,8 +42,6 @@ from .__init__ import (
     __version__,
 )
 from ._shared.types import PathLike
-from .model.layers import GroupNormalization3D, ReduceMax3D, ReduceMean3D
-from .model.losses import BinaryFocalLoss, CategoricalFocalLoss
 from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -321,9 +319,7 @@ def cell_classification(
             p_range = []
 
         means = model_config["metadata"]["normalization"]["means"]
-        standard_deviations = model_config["metadata"]["normalization"][
-            "standard_deviations"
-        ]
+        standard_deviations = model_config["metadata"]["normalization"]["standard_deviations"]
 
         logger.info(f"Model normalization type: {norm_type}")
         logger.info(f"Model means being used: {means}")
@@ -343,23 +339,17 @@ def cell_classification(
     ORIG_AXIS_ORDER = ["Z", "Y", "X"]
 
     total_batches = sum(zarr_dataset.internal_slice_sum) / batch_size
-    logger.debug(
-        "Total batches: %s - cell proposals: %s", total_batches, cell_proposals.shape[0]
-    )
+    logger.debug("Total batches: %s - cell proposals: %s", total_batches, cell_proposals.shape[0])
 
     if not torch.cuda.is_available():
-        raise RuntimeError(
-            "No CUDA-capable GPU detected. " "This pipeline requires a GPU to run."
-        )
+        raise RuntimeError("No CUDA-capable GPU detected. This pipeline requires a GPU to run.")
 
     total_memory = torch.cuda.get_device_properties(device).total_memory
     target_memory = int(0.80 * total_memory)
 
     logger.debug("GPU total memory: %s - Target memory: %s", total_memory, target_memory)
 
-    block_size_bytes = (
-        np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
-    )
+    block_size_bytes = np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
     max_blocks = target_memory // block_size_bytes
     logger.info(f"Maximum blocks: {max_blocks}")
 
@@ -401,9 +391,7 @@ def cell_classification(
             global_coord_pos=global_coord_pos[-3:],
             block_shape=data_block.shape[-3:],
             overlap_prediction_chunksize=overlap_prediction_chunksize[-3:],
-            dataset_shape=zarr_dataset.lazy_data.shape[
-                -3:
-            ],  # zarr_dataset.lazy_data.shape,
+            dataset_shape=zarr_dataset.lazy_data.shape[-3:],  # zarr_dataset.lazy_data.shape,
         )
         # print("Global pos: ", global_coord_pos, unpadded_global_slice, data_block.shape)
 
@@ -446,14 +434,10 @@ def cell_classification(
             )
 
             locations_in_block = proposals_in_block[["Z", "Y", "X"]].values
-            intensities_in_block = proposals_in_block.reset_index()[
-                ["fg", "bg", "index"]
-            ].values
+            intensities_in_block = proposals_in_block.reset_index()[["fg", "bg", "index"]].values
 
             for proposal, intensities in zip(locations_in_block, intensities_in_block):
-                local_coord_proposal = proposal[:3] - np.array(
-                    global_coord_positions_start[0][1:]
-                )
+                local_coord_proposal = proposal[:3] - np.array(global_coord_positions_start[0][1:])
 
                 # ZYX coord order
                 local_coord_proposal = local_coord_proposal.astype(np.int32)
@@ -482,9 +466,7 @@ def cell_classification(
         else:
             logger.debug("No proposals found in %s!", global_pos_name)
 
-        if (
-            curr_blocks >= max_blocks
-        ):  # and len(blocks_to_classify) == len(picked_proposals)
+        if curr_blocks >= max_blocks:  # and len(blocks_to_classify) == len(picked_proposals)
             blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
             picked_proposals = np.array(picked_proposals, dtype=np.uint32)
             picked_intensities = np.array(picked_intensities, dtype=np.float32)
@@ -504,9 +486,7 @@ def cell_classification(
                 for i in range(2):
                     if norm_type == "featurewise":
                         blocks_to_classify[:, :, :, :, i] -= means[i]
-                        blocks_to_classify[:, :, :, :, i] /= (
-                            standard_deviations[i] + 1e-7
-                        )
+                        blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
                     elif norm_type == "percentile":
                         for batch_idx in range(blocks_to_classify.shape[0]):
                             sample = blocks_to_classify[batch_idx, :, :, :, i]
@@ -524,12 +504,8 @@ def cell_classification(
 
                             blocks_to_classify[batch_idx, :, :, :, i] = sample_norm
 
-                logger.info(
-                    f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}"
-                )
-                logger.info(
-                    f"Normalized signal STD {np.std(blocks_to_classify[:, :, :, :, 0])}"
-                )
+                logger.info(f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}")
+                logger.info(f"Normalized signal STD {np.std(blocks_to_classify[:, :, :, :, 0])}")
 
                 logger.info(
                     f"Normalized background mean: {np.mean(blocks_to_classify[:, :, :, :, 1])}"
@@ -643,9 +619,7 @@ def cell_classification(
 
         cell_likelihood = []
         for idx, proposal in enumerate(picked_proposals):
-            cell_z, cell_y, cell_x = upsample_position(
-                proposal[:3], downsample_factor=downsample
-            )
+            cell_z, cell_y, cell_x = upsample_position(proposal[:3], downsample_factor=downsample)
 
             cell_likelihood.append(
                 [
@@ -711,9 +685,7 @@ def cell_classification(
                 },
                 "duration_seconds": (end_date_time - start_date_time).total_seconds(),
             },
-            resources=resource_monitor.to_resource_usage(
-                cpu_cores=int(utils.get_cpu_limit())
-            ),
+            resources=resource_monitor.to_resource_usage(cpu_cores=int(utils.get_cpu_limit())),
             notes=f"Classifying channel in path: {image_path}",
         )
     )
@@ -785,9 +757,7 @@ def calculate_threshold(
 
     # Check if absolute min is near a local min
     abs_is_local = (
-        any(abs(abs_min_idx - idx) <= 2 for idx in min_indices)
-        if len(min_indices) > 0
-        else False
+        any(abs(abs_min_idx - idx) <= 2 for idx in min_indices) if len(min_indices) > 0 else False
     )
 
     # Check if absolute min is at either edge
@@ -800,16 +770,12 @@ def calculate_threshold(
 
         left_slice = smoothed_counts[:min_idx]
         left_has_rise = (
-            np.any(left_slice > min_value * rise_factor)
-            if len(left_slice) > 5
-            else False
+            np.any(left_slice > min_value * rise_factor) if len(left_slice) > 5 else False
         )
 
         right_slice = smoothed_counts[min_idx + 1 :]
         right_has_rise = (
-            np.any(right_slice > min_value * rise_factor)
-            if len(right_slice) > 5
-            else False
+            np.any(right_slice > min_value * rise_factor) if len(right_slice) > 5 else False
         )
 
         return left_has_rise and right_has_rise
@@ -868,9 +834,7 @@ def calculate_threshold(
     bin_centers = (bins[:-1] + bins[1:]) / 2
     plt.plot(bin_centers, counts, alpha=0.5, label="Original")
     plt.plot(bin_centers, smoothed_counts, label="Smoothed")
-    plt.axvline(
-        min_position, color="r", linestyle="--", label=f"Min at {min_position:.3f}"
-    )
+    plt.axvline(min_position, color="r", linestyle="--", label=f"Min at {min_position:.3f}")
     plt.yscale("log")
     plt.legend()
     plt.savefig(output_png, dpi=300, bbox_inches="tight")
@@ -931,18 +895,14 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     return output_csv, df_cells, threshold
 
 
-def cumulative_likelihoods(
-    threshold: float, save_path: PathLike, logger: logging.Logger
-):
+def cumulative_likelihoods(threshold: float, save_path: PathLike, logger: logging.Logger):
     """
     Takes the cell_likelihoods.csv and creates a cumulative metric
     """
 
     logger.info(f"Reading cell likelihood CSV from cells path: {save_path}")
 
-    df = pd.read_csv(
-        os.path.join(save_path, "proposals/cell_likelihoods.csv"), index_col=0
-    )
+    df = pd.read_csv(os.path.join(save_path, "proposals/cell_likelihoods.csv"), index_col=0)
 
     df_cells = df.loc[df["Class"] == 1, :]
     df_non_cells = df.loc[df["Class"] == 0, :]

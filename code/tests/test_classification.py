@@ -54,9 +54,7 @@ class TestExtractCentered3DBlock:
 
     def test_full_array_size(self, big_block):
         """Requesting the same size as the array should return the full array."""
-        result = extract_centered_3d_block(
-            big_block, center=(5, 5, 5), size=(10, 10, 10)
-        )
+        result = extract_centered_3d_block(big_block, center=(5, 5, 5), size=(10, 10, 10))
         assert result.shape == (4, 10, 10, 10)
 
 
@@ -99,14 +97,10 @@ class TestUpsamplePosition:
 class TestCalculateThreshold:
     """Tests for calculate_threshold function."""
 
-    def test_returns_tuple_of_df_and_float(
-        self, tmp_dir, mock_logger, bimodal_likelihoods_df
-    ):
+    def test_returns_tuple_of_df_and_float(self, tmp_dir, mock_logger, bimodal_likelihoods_df):
         """Function should return (DataFrame, float)."""
         os.makedirs(os.path.join(tmp_dir, "proposals"), exist_ok=True)
-        result_df, threshold = calculate_threshold(
-            bimodal_likelihoods_df, tmp_dir, mock_logger
-        )
+        result_df, threshold = calculate_threshold(bimodal_likelihoods_df, tmp_dir, mock_logger)
         assert isinstance(result_df, pd.DataFrame)
         assert isinstance(threshold, float)
 
@@ -122,9 +116,7 @@ class TestCalculateThreshold:
         result_df, _ = calculate_threshold(bimodal_likelihoods_df, tmp_dir, mock_logger)
         assert set(result_df["Class"].unique()).issubset({0, 1})
 
-    def test_threshold_is_in_valid_range(
-        self, tmp_dir, mock_logger, bimodal_likelihoods_df
-    ):
+    def test_threshold_is_in_valid_range(self, tmp_dir, mock_logger, bimodal_likelihoods_df):
         """Threshold value should be between 0 and 1."""
         os.makedirs(os.path.join(tmp_dir, "proposals"), exist_ok=True)
         _, threshold = calculate_threshold(bimodal_likelihoods_df, tmp_dir, mock_logger)
@@ -141,9 +133,7 @@ class TestCalculateThreshold:
         """All-high likelihoods should fall back to min_catch_high threshold."""
         os.makedirs(os.path.join(tmp_dir, "proposals"), exist_ok=True)
         df = pd.DataFrame({"x": [1], "y": [1], "z": [1], "Cell Likelihood": [0.99]})
-        _, threshold = calculate_threshold(
-            df, tmp_dir, mock_logger, min_catch_high=0.85
-        )
+        _, threshold = calculate_threshold(df, tmp_dir, mock_logger, min_catch_high=0.85)
         assert threshold == pytest.approx(0.85)
 
     def test_fallback_min_catch_low(self, tmp_dir, mock_logger):
@@ -187,9 +177,7 @@ class TestMergeCsv:
         self._write_block_csv("classified_block_000.csv", self._make_block_df(5, 0))
         self._write_block_csv("classified_block_001.csv", self._make_block_df(5, 1))
 
-        _, cells_df, threshold = merge_csv(
-            self.metadata_path, self.save_path, mock_logger
-        )
+        _, cells_df, threshold = merge_csv(self.metadata_path, self.save_path, mock_logger)
         assert isinstance(cells_df, pd.DataFrame)
         assert isinstance(threshold, float)
 
@@ -199,9 +187,7 @@ class TestMergeCsv:
 
         output_csv, _, _ = merge_csv(self.metadata_path, self.save_path, mock_logger)
         assert os.path.exists(output_csv)
-        assert os.path.exists(
-            os.path.join(self.save_path, "proposals", "cell_likelihoods.csv")
-        )
+        assert os.path.exists(os.path.join(self.save_path, "proposals", "cell_likelihoods.csv"))
 
     def test_raises_on_no_csvs(self, mock_logger):
         """merge_csv should raise RuntimeError when no classified_block_*.csv exist."""
@@ -231,9 +217,7 @@ class TestCumulativeLikelihoods:
 
         cumulative_likelihoods(threshold=0.5, save_path=tmp_dir, logger=mock_logger)
 
-        df_metrics = pd.read_csv(
-            os.path.join(tmp_dir, "cell_likelihood_metrics.csv"), index_col=0
-        )
+        df_metrics = pd.read_csv(os.path.join(tmp_dir, "cell_likelihood_metrics.csv"), index_col=0)
         expected_cols = {
             "Cell Counts",
             "Cell Likelihood Mean",
@@ -253,9 +237,7 @@ class TestCumulativeLikelihoods:
 
         cumulative_likelihoods(threshold=0.5, save_path=tmp_dir, logger=mock_logger)
 
-        df_metrics = pd.read_csv(
-            os.path.join(tmp_dir, "cell_likelihood_metrics.csv"), index_col=0
-        )
+        df_metrics = pd.read_csv(os.path.join(tmp_dir, "cell_likelihood_metrics.csv"), index_col=0)
         expected_cells = int((classified_df["Class"] == 1).sum())
         assert int(df_metrics.loc["Metrics", "Cell Counts"]) == expected_cells
 
@@ -267,9 +249,5 @@ class TestCumulativeLikelihoods:
 
         cumulative_likelihoods(threshold=0.42, save_path=tmp_dir, logger=mock_logger)
 
-        df_metrics = pd.read_csv(
-            os.path.join(tmp_dir, "cell_likelihood_metrics.csv"), index_col=0
-        )
-        assert df_metrics.loc["Metrics", "Classification Threshold"] == pytest.approx(
-            0.42
-        )
+        df_metrics = pd.read_csv(os.path.join(tmp_dir, "cell_likelihood_metrics.csv"), index_col=0)
+        assert df_metrics.loc["Metrics", "Classification Threshold"] == pytest.approx(0.42)
