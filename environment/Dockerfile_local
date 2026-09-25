@@ -40,7 +40,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir \
         aind-large-scale-prediction==1.0.0 \
-        aind-data-schema==1.0.0 \
+        aind-data-schema==2.8.0 \
+        "aind-data-schema-models>=5.7.1,<6" \
+        pynvml \
         aind-ng-link==1.0.6 \
         psutil==5.9.8 \
         jupyter-server-proxy==3.2.2 \
@@ -49,7 +51,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
         pandas \
         openpyxl \
         keras==3.11.1 \
-        tensorflow==2.18.0
+        tensorflow==2.18.0 \
+        log-schema==0.2.10.dev1
 
 # ---------- Stage 2: Runtime ----------
 FROM tensorflow/tensorflow:2.18.0-gpu as runtime
@@ -57,7 +60,7 @@ FROM tensorflow/tensorflow:2.18.0-gpu as runtime
 LABEL maintainer="Camilo Laiton <camilo.laiton@alleninstitute.org>" \
       org.opencontainers.image.title="Image Cell Classification" \
       org.opencontainers.image.description="Container for cell classification in lightsheet images" \
-      org.opencontainers.image.version="0.0.6" \
+      org.opencontainers.image.version="0.1.1" \
       org.opencontainers.image.licenses="MIT"
 
 ARG DEBIAN_FRONTEND=noninteractive

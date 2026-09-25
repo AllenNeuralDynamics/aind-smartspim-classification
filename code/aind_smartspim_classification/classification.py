@@ -9,7 +9,7 @@ import json
 import logging
 import multiprocessing
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from glob import glob
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -19,19 +19,29 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-from aind_data_schema.core.processing import DataProcess, ProcessName
+from aind_data_schema.components.identifiers import Code
+from aind_data_schema.core.processing import DataProcess, ProcessStage
+from aind_data_schema_models.process_names import ProcessName
 from aind_large_scale_prediction.generator.dataset import create_data_loader
 from aind_large_scale_prediction.generator.utils import (
-    concatenate_lazy_data, recover_global_position, unpad_global_coords)
+    concatenate_lazy_data,
+    recover_global_position,
+    unpad_global_coords,
+)
 from aind_large_scale_prediction.io import ImageReaderFactory
 from natsort import natsorted
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import argrelmin
 
-from .__init__ import __maintainers__, __pipeline_version__, __version__
+from .__init__ import (
+    __maintainers__,
+    __pipeline_name__,
+    __pipeline_version__,
+    __title__,
+    __url__,
+    __version__,
+)
 from ._shared.types import PathLike
-from .model.layers import GroupNormalization3D, ReduceMax3D, ReduceMean3D
-from .model.losses import BinaryFocalLoss, CategoricalFocalLoss
 from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -204,6 +214,7 @@ def cell_classification(
         a single call. prediction_chunksize > super_chunksize.
     """
     start_date_time = datetime.now()
+    resource_monitor = utils.ResourceMonitor(interval_seconds=30.0).start()
 
     data_processes = []
 
@@ -220,7 +231,7 @@ def cell_classification(
     )
     downsample = smartspim_config["model_config"]["parameters"]["downsample"]
 
-    print(f" Image Path: {image_path} -- mask path: {mask_path} - scale: {downsample}")
+    logger.debug(f" Image Path: {image_path} -- mask path: {mask_path} - scale: {downsample}")
 
     device = None
 
@@ -245,8 +256,10 @@ def cell_classification(
         overlap_prediction_chunksize = (0, axis_pad, axis_pad, axis_pad)
         prediction_chunksize = (lazy_data.shape[-4],) + prediction_chunksize
 
-        logger.info(
-            f"Background path provided! New prediction chunksize: {prediction_chunksize} - New overlap: {overlap_prediction_chunksize}"
+        logger.debug(
+            "Background path provided! New prediction chunksize: %s - New overlap: %s",
+            prediction_chunksize,
+            overlap_prediction_chunksize,
         )
 
     else:
@@ -261,7 +274,7 @@ def cell_classification(
             .as_dask_array()
         )
 
-    print("Loaded lazy data: ", lazy_data)
+    logger.debug(f"Loaded lazy data: {lazy_data}")
     batch_size = 1
     dtype = np.float32
     zarr_data_loader, zarr_dataset = create_data_loader(
@@ -282,8 +295,10 @@ def cell_classification(
         locked_array=False,
     )
 
-    logger.info(
-        f"Running cell classification in chunked data. Prediction chunksize: {prediction_chunksize} - Overlap chunksize: {overlap_prediction_chunksize}"
+    logger.debug(
+        "Running cell classification in chunked data. Prediction chunksize: %s - Overlap chunksize: %s",
+        prediction_chunksize,
+        overlap_prediction_chunksize,
     )
 
     model_config = smartspim_config.get("model_config")
@@ -295,7 +310,7 @@ def cell_classification(
         standardize = True
         try:
             norm_type = model_config["metadata"]["normalization"]["type"]
-        except:
+        except KeyError:
             norm_type = "featurewise"
 
         if norm_type == "percentile":
@@ -304,9 +319,7 @@ def cell_classification(
             p_range = []
 
         means = model_config["metadata"]["normalization"]["means"]
-        standard_deviations = model_config["metadata"]["normalization"][
-            "standard_deviations"
-        ]
+        standard_deviations = model_config["metadata"]["normalization"]["standard_deviations"]
 
         logger.info(f"Model normalization type: {norm_type}")
         logger.info(f"Model means being used: {means}")
@@ -326,20 +339,18 @@ def cell_classification(
     ORIG_AXIS_ORDER = ["Z", "Y", "X"]
 
     total_batches = sum(zarr_dataset.internal_slice_sum) / batch_size
-    logger.info(
-        f"Total batches: {total_batches} - cell proposals: {cell_proposals.shape[0]}"
-    )
+    logger.debug("Total batches: %s - cell proposals: %s", total_batches, cell_proposals.shape[0])
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("No CUDA-capable GPU detected. This pipeline requires a GPU to run.")
 
     total_memory = torch.cuda.get_device_properties(device).total_memory
     target_memory = int(0.80 * total_memory)
 
-    logger.info(f"GPU total memory: {total_memory} - Target memory: {target_memory}")
+    logger.debug("GPU total memory: %s - Target memory: %s", total_memory, target_memory)
 
-    block_size_bytes = (
-        np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
-    )
-    # Estimate the number of blocks that fit within 80% memory
-    max_blocks = 100000  # target_memory // block_size_bytes
+    block_size_bytes = np.prod((cube_depth, cube_height, cube_width, 2)) * np.dtype(dtype).itemsize
+    max_blocks = target_memory // block_size_bytes
     logger.info(f"Maximum blocks: {max_blocks}")
 
     curr_blocks = 0
@@ -350,8 +361,17 @@ def cell_classification(
     # Zarr at a downsampled resolution
     # Cell locations should be at this level
     for i, sample in enumerate(zarr_data_loader):
-        logger.info(
-            f"Batch [{i} | {total_batches}]: processed_cells {processed_cells} blocks: {curr_blocks} - Max blocks: {max_blocks} {sample.batch_tensor.shape} - Pinned?: {sample.batch_tensor.is_pinned()} - dtype: {sample.batch_tensor.dtype} - device: {sample.batch_tensor.device}"
+        logger.debug(
+            "Batch [%s | %s]: processed_cells %s blocks: %s - Max blocks: %s %s - Pinned?: %s - dtype: %s - device: %s",
+            i,
+            total_batches,
+            processed_cells,
+            curr_blocks,
+            max_blocks,
+            sample.batch_tensor.shape,
+            sample.batch_tensor.is_pinned(),
+            sample.batch_tensor.dtype,
+            sample.batch_tensor.device,
         )
 
         data_block = sample.batch_tensor[0, ...]  # .permute(-1, -2, -3, -4)
@@ -371,9 +391,7 @@ def cell_classification(
             global_coord_pos=global_coord_pos[-3:],
             block_shape=data_block.shape[-3:],
             overlap_prediction_chunksize=overlap_prediction_chunksize[-3:],
-            dataset_shape=zarr_dataset.lazy_data.shape[
-                -3:
-            ],  # zarr_dataset.lazy_data.shape,
+            dataset_shape=zarr_dataset.lazy_data.shape[-3:],  # zarr_dataset.lazy_data.shape,
         )
         # print("Global pos: ", global_coord_pos, unpadded_global_slice, data_block.shape)
 
@@ -409,19 +427,17 @@ def cell_classification(
         )
 
         if proposals_in_block.shape[0]:
-            logger.info(
-                f"{proposals_in_block.shape[0]} proposals found in {global_pos_name}!"
+            logger.debug(
+                "%s proposals found in %s!",
+                proposals_in_block.shape[0],
+                global_pos_name,
             )
 
             locations_in_block = proposals_in_block[["Z", "Y", "X"]].values
-            intensities_in_block = proposals_in_block.reset_index()[
-                ["fg", "bg", "index"]
-            ].values
+            intensities_in_block = proposals_in_block.reset_index()[["fg", "bg", "index"]].values
 
             for proposal, intensities in zip(locations_in_block, intensities_in_block):
-                local_coord_proposal = proposal[:3] - np.array(
-                    global_coord_positions_start[0][1:]
-                )
+                local_coord_proposal = proposal[:3] - np.array(global_coord_positions_start[0][1:])
 
                 # ZYX coord order
                 local_coord_proposal = local_coord_proposal.astype(np.int32)
@@ -448,11 +464,9 @@ def cell_classification(
                 picked_intensities.append(intensities)
                 curr_blocks += 1
         else:
-            logger.info(f"No proposals found in {global_pos_name}!")
+            logger.debug("No proposals found in %s!", global_pos_name)
 
-        if (
-            curr_blocks >= max_blocks
-        ):  # and len(blocks_to_classify) == len(picked_proposals)
+        if curr_blocks >= max_blocks:  # and len(blocks_to_classify) == len(picked_proposals)
             blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
             picked_proposals = np.array(picked_proposals, dtype=np.uint32)
             picked_intensities = np.array(picked_intensities, dtype=np.float32)
@@ -462,7 +476,7 @@ def cell_classification(
                     "Shapes between blocks and proposals are not the same:"
                     f"blocks: {blocks_to_classify.shape} - Proposals: {picked_proposals.shape}"
                 )
-                ValueError(error)
+                raise ValueError(error)
 
             previous_cell_count = processed_cells
             processed_cells += picked_proposals.shape[0]
@@ -472,9 +486,7 @@ def cell_classification(
                 for i in range(2):
                     if norm_type == "featurewise":
                         blocks_to_classify[:, :, :, :, i] -= means[i]
-                        blocks_to_classify[:, :, :, :, i] /= (
-                            standard_deviations[i] + 1e-7
-                        )
+                        blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
                     elif norm_type == "percentile":
                         for batch_idx in range(blocks_to_classify.shape[0]):
                             sample = blocks_to_classify[batch_idx, :, :, :, i]
@@ -492,12 +504,8 @@ def cell_classification(
 
                             blocks_to_classify[batch_idx, :, :, :, i] = sample_norm
 
-                logger.info(
-                    f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}"
-                )
-                logger.info(
-                    f"Normalized signal STD {np.std(blocks_to_classify[:, :, :, :, 0])}"
-                )
+                logger.info(f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}")
+                logger.info(f"Normalized signal STD {np.std(blocks_to_classify[:, :, :, :, 0])}")
 
                 logger.info(
                     f"Normalized background mean: {np.mean(blocks_to_classify[:, :, :, :, 1])}"
@@ -513,7 +521,7 @@ def cell_classification(
                     "Shapes between blocks and predictions are not the same:"
                     f"blocks: {blocks_to_classify.shape} - Proposals: {predictions_raw.shape}"
                 )
-                ValueError(error)
+                raise ValueError(error)
 
             cell_likelihood = []
             for idx, proposal in enumerate(picked_proposals):
@@ -572,7 +580,7 @@ def cell_classification(
                 "Shapes between blocks and proposals are not the same:"
                 f"blocks: {blocks_to_classify.shape} - Proposals: {picked_proposals.shape}"
             )
-            ValueError(error)
+            raise ValueError(error)
 
         previous_cell_count = processed_cells
         processed_cells += picked_proposals.shape[0]
@@ -607,13 +615,11 @@ def cell_classification(
                 "Shapes between blocks and predictions are not the same:"
                 f"blocks: {blocks_to_classify.shape} - Proposals: {predictions_raw.shape}"
             )
-            ValueError(error)
+            raise ValueError(error)
 
         cell_likelihood = []
         for idx, proposal in enumerate(picked_proposals):
-            cell_z, cell_y, cell_x = upsample_position(
-                proposal[:3], downsample_factor=downsample
-            )
+            cell_z, cell_y, cell_x = upsample_position(proposal[:3], downsample_factor=downsample)
 
             cell_likelihood.append(
                 [
@@ -651,28 +657,35 @@ def cell_classification(
         picked_intensities = []
         blocks_to_classify = []
 
-    end_date_time = datetime.now()
+    resource_monitor.stop()
+    end_date_time = datetime.now(timezone.utc)
+    start_date_time = start_date_time.replace(tzinfo=timezone.utc)
 
     data_processes.append(
         DataProcess(
-            name=ProcessName.IMAGE_CELL_SEGMENTATION,
-            software_version=__version__,
+            process_type=ProcessName.IMAGE_CELL_CLASSIFICATION,
+            name=f"Image cell classification - {Path(image_path).name}",
+            stage=ProcessStage.PROCESSING,
+            code=Code(url=__url__, name=__title__, version=__version__),
+            experimenters=__maintainers__,
+            pipeline_name=__pipeline_name__,
             start_date_time=start_date_time,
             end_date_time=end_date_time,
-            input_location=str(image_path),
-            output_location=str(smartspim_config["metadata_path"]),
-            outputs={},
-            code_url="https://github.com/AllenNeuralDynamics/aind-smartspim-classification",
-            code_version=__version__,
-            parameters={
-                "image_path": str(image_path),
-                "background_path": str(background_path),
-                "mask_path": str(mask_path),
-                "smartspim_cell_config": smartspim_config,
-                "target_size_mb": target_size_mb,
-                "prediction_chunksize": prediction_chunksize,
-                "overlap_prediction_chunksize": overlap_prediction_chunksize,
+            output_path=str(smartspim_config["metadata_path"]),
+            output_parameters={
+                "input_location": str(image_path),
+                "parameters": {
+                    "image_path": str(image_path),
+                    "background_path": str(background_path),
+                    "mask_path": str(mask_path),
+                    "smartspim_cell_config": smartspim_config,
+                    "target_size_mb": target_size_mb,
+                    "prediction_chunksize": prediction_chunksize,
+                    "overlap_prediction_chunksize": overlap_prediction_chunksize,
+                },
+                "duration_seconds": (end_date_time - start_date_time).total_seconds(),
             },
+            resources=resource_monitor.to_resource_usage(cpu_cores=int(utils.get_cpu_limit())),
             notes=f"Classifying channel in path: {image_path}",
         )
     )
@@ -683,23 +696,24 @@ def cell_classification(
 
     return str(image_path), data_processes
 
+
 def calculate_threshold(
     df: pd.DataFrame,
     save_path: PathLike,
-    logger = logging.Logger,
+    logger: logging.Logger = None,
     n_bins: int = 256,
     min_catch_high: float = 0.850,
     min_catch_low: float = 0.050,
     rise_factor: float = 2.0,
 ):
     """Calculates the class decision boundary between non-cells and cells.
-    
+
     Parameters
     ----------
     df: pd.DataFrame
         dataframe created from merging all of the classification block
         dataframes
-        
+
     save_path: Pathlike,
         Location to save the PNG depicting location of threshold and likelihood
         distribution
@@ -711,16 +725,16 @@ def calculate_threshold(
         number of binds of histogram for calculating threshold. Default = 256
 
     min_catch_high : float
-        Fallback threshold when absolute min is at right edge (1.0) 
+        Fallback threshold when absolute min is at right edge (1.0)
         and no meaningful valley found. Default 0.950.
-        
+
     min_catch_low : float
         Fallback threshold when absolute min is at left edge (0.0)
         and no meaningful valley found. Default 0.050.
-        
+
     rise_factor : float
         How high the peaks for cells and non-cells need to be above the valley
-        for it to be considered meaningful. Helps to avoid wiggles in the 
+        for it to be considered meaningful. Helps to avoid wiggles in the
         fit being assigned as thresholds
 
     Returns
@@ -736,35 +750,40 @@ def calculate_threshold(
     counts, bins, _ = plt.hist(data, bins=n_bins)
     smoothed_counts = gaussian_filter1d(counts, sigma=3)
     bin_centers = (bins[:-1] + bins[1:]) / 2
-    
+
     min_indices = argrelmin(smoothed_counts)[0]
     abs_min_idx = np.argmin(smoothed_counts)
     abs_min_position = bin_centers[abs_min_idx]
-    
+
     # Check if absolute min is near a local min
-    abs_is_local = any(abs(abs_min_idx - idx) <= 2 for idx in min_indices) if len(min_indices) > 0 else False
-    
+    abs_is_local = (
+        any(abs(abs_min_idx - idx) <= 2 for idx in min_indices) if len(min_indices) > 0 else False
+    )
+
     # Check if absolute min is at either edge
     at_left_edge = abs_min_idx == 0
     at_right_edge = abs_min_idx == n_bins - 1
-    
+
     def is_meaningful_valley(min_idx):
         """Check if valley has significant peaks on both sides."""
         min_value = smoothed_counts[min_idx]
-        
+
         left_slice = smoothed_counts[:min_idx]
-        left_has_rise = np.any(left_slice > min_value * rise_factor) if len(left_slice) > 5 else False
-        
-        right_slice = smoothed_counts[min_idx+1:]
-        right_has_rise = np.any(right_slice > min_value * rise_factor) if len(right_slice) > 5 else False
-        
+        left_has_rise = (
+            np.any(left_slice > min_value * rise_factor) if len(left_slice) > 5 else False
+        )
+
+        right_slice = smoothed_counts[min_idx + 1 :]
+        right_has_rise = (
+            np.any(right_slice > min_value * rise_factor) if len(right_slice) > 5 else False
+        )
+
         return left_has_rise and right_has_rise
-    
 
     if abs_is_local:
         min_position = abs_min_position
         logger.info(f"Minimum at x ≈ {min_position:.3f} is absolute minimum")
-        
+
     elif at_left_edge:
         if len(min_indices) > 0:
             deepest_idx = min_indices[np.argmin(smoothed_counts[min_indices])]
@@ -773,11 +792,15 @@ def calculate_threshold(
                 logger.info(f"Minimum at x ≈ {min_position:.3f} is local minimum")
             else:
                 min_position = min_catch_low
-                logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exists and absolute Minimum occurs at 0")
+                logger.info(
+                    f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exists and absolute Minimum occurs at 0"
+                )
         else:
             min_position = min_catch_low
-            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exsits and absolute Minimum occurs at 0")
-            
+            logger.info(
+                f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun exsits and absolute Minimum occurs at 0"
+            )
+
     elif at_right_edge:
         if len(min_indices) > 0:
             deepest_idx = min_indices[np.argmin(smoothed_counts[min_indices])]
@@ -785,19 +808,25 @@ def calculate_threshold(
                 min_position = bin_centers[deepest_idx]
             else:
                 min_position = min_catch_high
-                logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
+                logger.info(
+                    f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0"
+                )
         else:
             min_position = min_catch_high
-            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
-            
+            logger.info(
+                f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0"
+            )
+
     else:
         if is_meaningful_valley(abs_min_idx):
             min_position = abs_min_position
             logger.info(f"Minimum at x ≈ {min_position:.3f} is absolute minimum")
         else:
             min_position = min_catch_high
-            logger.info(f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0")
-    
+            logger.info(
+                f"Minimum set to x ≈ {min_position:.3f} as no clear local minimun and absolute Minimum occurs at 1.0"
+            )
+
     output_png = os.path.join(save_path, "proposals/threshold_identification.png")
 
     # Plot to visualize
@@ -805,16 +834,14 @@ def calculate_threshold(
     bin_centers = (bins[:-1] + bins[1:]) / 2
     plt.plot(bin_centers, counts, alpha=0.5, label="Original")
     plt.plot(bin_centers, smoothed_counts, label="Smoothed")
-    plt.axvline(
-        min_position, color="r", linestyle="--", label=f"Min at {min_position:.3f}"
-    )
+    plt.axvline(min_position, color="r", linestyle="--", label=f"Min at {min_position:.3f}")
     plt.yscale("log")
     plt.legend()
     plt.savefig(output_png, dpi=300, bbox_inches="tight")
     plt.close()
 
     df.insert(3, "Class", (df["Cell Likelihood"] >= min_position).astype(int))
-    
+
     return df, min_position
 
 
@@ -837,10 +864,16 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     for f in natsorted(tmp_files):
         try:
             cells.append(pd.read_csv(f, index_col=0))
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not read {f}: {e}")
 
     utils.create_folder(f"{save_path}/proposals")
+
+    if not cells:
+        raise RuntimeError(
+            f"No classified block CSVs could be read from {metadata_path}. "
+            "Check that cell_classification() completed successfully."
+        )
 
     # save list of all cells
     df = pd.concat(cells)
@@ -862,18 +895,14 @@ def merge_csv(metadata_path: PathLike, save_path: PathLike, logger: logging.Logg
     return output_csv, df_cells, threshold
 
 
-def cumulative_likelihoods(
-    threshold: float, save_path: PathLike, logger: logging.Logger
-):
+def cumulative_likelihoods(threshold: float, save_path: PathLike, logger: logging.Logger):
     """
     Takes the cell_likelihoods.csv and creates a cumulative metric
     """
 
     logger.info(f"Reading cell likelihood CSV from cells path: {save_path}")
 
-    df = pd.read_csv(
-        os.path.join(save_path, "proposals/cell_likelihoods.csv"), index_col=0
-    )
+    df = pd.read_csv(os.path.join(save_path, "proposals/cell_likelihoods.csv"), index_col=0)
 
     df_cells = df.loc[df["Class"] == 1, :]
     df_non_cells = df.loc[df["Class"] == 0, :]
@@ -927,7 +956,7 @@ def generate_neuroglancer_link(
         smartspim_config["save_path"], "visualization/detected_precomputed"
     )
     utils.create_folder(output_precomputed)
-    print(f"Output cells precomputed: {output_precomputed}")
+    logger.debug(f"Output cells precomputed: {output_precomputed}")
 
     utils.generate_precomputed_cells(
         cells_df, precompute_path=output_precomputed, configs=ng_configs
@@ -1032,8 +1061,7 @@ def main(
 
     utils.create_folder(smartspim_config["metadata_path"])
 
-    # Logger pointing everything to the metadata path
-    logger = utils.create_logger(output_log_path=smartspim_config["metadata_path"])
+    logger = logging.getLogger(__name__)
     utils.print_system_information(logger)
 
     # Tracking compute resources
@@ -1056,10 +1084,12 @@ def main(
     profile_process.start()
 
     # run cell detection
+    chunk_size = smartspim_config.get("chunk_size", 128)
     image_path, data_processes = cell_classification(
         smartspim_config=smartspim_config,
         logger=logger,
         cell_proposals=cell_proposals,
+        prediction_chunksize=(chunk_size, chunk_size, chunk_size),
     )
 
     # merge block .xmls and .csvs into single file
@@ -1091,8 +1121,9 @@ def main(
     utils.generate_processing(
         data_processes=data_processes,
         dest_processing=str(smartspim_config["metadata_path"]),
-        processor_full_name=__maintainers__[-1],
+        pipeline_name=__pipeline_name__,
         pipeline_version=__pipeline_version__,
+        pipeline_url=__url__,
     )
 
     # Getting tracked resources and plotting image

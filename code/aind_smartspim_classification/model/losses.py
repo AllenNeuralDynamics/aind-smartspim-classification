@@ -20,7 +20,7 @@ class BinaryFocalLoss(keras.losses.Loss):
     ----------
     gamma : float, default 2.0
         Focusing parameter. Larger values reduce the loss contribution
-        from well-classified examples: $(1 - p_t)^\gamma$.
+        from well-classified examples: $(1 - p_t)^gamma$.
     alpha : float, default 0.25
         Class balancing factor applied to positive vs negative classes.
 
@@ -32,6 +32,7 @@ class BinaryFocalLoss(keras.losses.Loss):
     """
 
     def __init__(self, gamma=2.0, alpha=0.25, **kwargs):
+        """Initialize the loss with the given gamma and alpha parameters."""
         super().__init__(**kwargs)
         self.gamma = gamma
         self.alpha = alpha
@@ -91,7 +92,7 @@ class CategoricalFocalLoss(keras.losses.Loss):
     ----------
     gamma : float, default 2.0
         Focusing parameter. Larger values reduce the loss contribution
-        from well-classified examples: $(1 - p_t)^\gamma$.
+        from well-classified examples: $(1 - p_t)^gamma$.
     alpha : float or sequence, default 0.25
         Class balancing factor. If a list/tuple is provided, it should match
         the number of classes and will be applied per-class.
@@ -104,6 +105,7 @@ class CategoricalFocalLoss(keras.losses.Loss):
     """
 
     def __init__(self, gamma=2.0, alpha=0.25, **kwargs):
+        """Initialize the loss"""
         super().__init__(**kwargs)
         self.gamma = gamma
         self.alpha = alpha

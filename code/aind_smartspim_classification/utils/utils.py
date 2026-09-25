@@ -15,8 +15,9 @@ import os
 import platform
 import struct
 import subprocess
+import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from multiprocessing.managers import BaseManager, NamespaceProxy
 from pathlib import Path
 from typing import List, Optional
@@ -26,12 +27,81 @@ import dask.array as da
 import matplotlib.pyplot as plt
 import numpy as np
 import psutil
-from aind_data_schema.core.processing import (DataProcess, PipelineProcess,
-                                              Processing)
+from aind_data_schema.components.identifiers import Code
+from aind_data_schema.core.processing import (
+    DataProcess,
+    Processing,
+    ResourceTimestamped,
+    ResourceUsage,
+)
+from aind_data_schema_models.units import MemoryUnit
 from scipy import ndimage as ndi
 from scipy.signal import argrelmin
 
 from .._shared.types import PathLike
+
+
+class ResourceMonitor:
+    """Thread-based CPU/RAM/GPU resource monitor for DataProcess resource tracking."""
+
+    def __init__(self, interval_seconds: Optional[float] = 1.0):
+        self._interval = interval_seconds
+        self._cpu_usage: List[ResourceTimestamped] = []
+        self._ram_usage: List[ResourceTimestamped] = []
+        self._gpu_usage: List[ResourceTimestamped] = []
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._gpu_available = False
+
+    def _run(self) -> None:
+        try:
+            import pynvml
+
+            pynvml.nvmlInit()
+            self._gpu_available = True
+        except Exception:
+            self._gpu_available = False
+        while not self._stop_event.is_set():
+            now = datetime.now(timezone.utc)
+            self._cpu_usage.append(
+                ResourceTimestamped(timestamp=now, usage=psutil.cpu_percent(interval=None))
+            )
+            self._ram_usage.append(
+                ResourceTimestamped(timestamp=now, usage=psutil.virtual_memory().percent)
+            )
+            if self._gpu_available:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                self._gpu_usage.append(ResourceTimestamped(timestamp=now, usage=float(util.gpu)))
+            self._stop_event.wait(self._interval)
+
+    def start(self) -> "ResourceMonitor":
+        psutil.cpu_percent(interval=None)  # prime the first sample
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        self._thread.join(timeout=self._interval + 1)
+
+    def __enter__(self) -> "ResourceMonitor":
+        return self.start()
+
+    def __exit__(self, *exc_info) -> None:
+        self.stop()
+
+    def to_resource_usage(self, cpu_cores: Optional[int] = None) -> ResourceUsage:
+        return ResourceUsage(
+            os=platform.system(),
+            architecture=platform.machine(),
+            cpu_cores=cpu_cores,
+            system_memory=round(psutil.virtual_memory().total / (1024**3), 2),
+            system_memory_unit=MemoryUnit.GB,
+            cpu_usage=self._cpu_usage,
+            ram_usage=self._ram_usage,
+            gpu_usage=self._gpu_usage if self._gpu_available else None,
+            ram_unit=MemoryUnit.GB,
+        )
 
 
 def find_good_blocks(img, counts, chunk, ds=3):
@@ -142,54 +212,13 @@ def execute_command_helper(
     if print_command:
         print(command)
 
-    popen = subprocess.Popen(
-        command, stdout=subprocess.PIPE, universal_newlines=True, shell=True
-    )
+    popen = subprocess.Popen(command, stdout=subprocess.PIPE, universal_newlines=True, shell=True)
     for stdout_line in iter(popen.stdout.readline, ""):
         yield str(stdout_line).strip()
     popen.stdout.close()
     return_code = popen.wait()
     if return_code:
         raise subprocess.CalledProcessError(return_code, command)
-
-
-def create_logger(output_log_path: PathLike):
-    """
-    Creates a logger that generates
-    output logs to a specific path.
-
-    Parameters
-    ------------
-    output_log_path: PathLike
-        Path where the log is going
-        to be stored
-
-    Returns
-    -----------
-    logging.Logger
-        Created logger pointing to
-        the file path.
-    """
-
-    CURR_DATE_TIME = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    LOGS_FILE = f"{output_log_path}/classification_log_{CURR_DATE_TIME}.log"
-
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s - %(levelname)s : %(message)s",
-        datefmt="%Y-%m-%d %H:%M",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(LOGS_FILE, "a"),
-        ],
-        force=True,
-    )
-
-    logging.disable("DEBUG")
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
-
-    return logger
 
 
 def read_json_as_dict(filepath: str):
@@ -279,16 +308,14 @@ def volume_orientation(acquisition_params: dict):
         orientation = [0.5, 0.5, -0.5, 0.5]
     elif acquired == "IAR":
         orientation = [0.5, -0.5, 0.5, 0.5]
-    elif acquired == "RAS":
+    elif acquired in ["RAS", "LAS"]:
         orientation = [np.cos(np.pi / 4), 0.0, 0.0, np.cos(np.pi / 4)]
     elif acquired == "RPI":
         orientation = [np.cos(np.pi / 4), 0.0, 0.0, -np.cos(np.pi / 4)]
     elif acquired == "LAI":
         orientation = [0.0, np.cos(np.pi / 4), -np.cos(np.pi / 4), 0.0]
     else:
-        raise ValueError(
-            "Acquisition orientation: {acquired} has unknown NG parameters"
-        )
+        raise ValueError(f"Acquisition orientation: {acquired} has unknown NG parameters")
 
     return orientation
 
@@ -359,7 +386,7 @@ def calculate_dynamic_range(image_path: PathLike, percentile: 99, level: 3):
     """
 
     img = da.from_zarr(image_path, str(level)).squeeze()
-    range_max = da.percentile(img.flatten(), percentile).compute()[0]
+    range_max = da.percentile(img.flatten(), percentile).compute().item()
     window_max = int(range_max * 1.5)
     dynamic_ranges = [int(range_max), window_max]
 
@@ -458,9 +485,7 @@ def generate_precomputed_cells(cells, precompute_path, configs):
 
     metadata = {
         "@type": "neuroglancer_annotations_v1",
-        "dimensions": dict(
-            (key, configs["dimensions"][key]) for key in ("z", "y", "x")
-        ),
+        "dimensions": dict((key, configs["dimensions"][key]) for key in ("z", "y", "x")),
         "lower_bound": [float(x) for x in l_bounds],
         "upper_bound": [float(x) for x in u_bounds],
         "annotation_type": "point",
@@ -517,44 +542,17 @@ def generate_precomputed_cells(cells, precompute_path, configs):
 def generate_processing(
     data_processes: List[DataProcess],
     dest_processing: PathLike,
-    processor_full_name: str,
+    pipeline_name: str,
     pipeline_version: str,
-):
-    """
-    Generates data description for the output folder.
-
-    Parameters
-    ------------------------
-
-    data_processes: List[dict]
-        List with the processes aplied in the pipeline.
-
-    dest_processing: PathLike
-        Path where the processing file will be placed.
-
-    processor_full_name: str
-        Person in charged of running the pipeline
-        for this data asset
-
-    pipeline_version: str
-        Terastitcher pipeline version
-
-    """
-    # flake8: noqa: E501
-    processing_pipeline = PipelineProcess(
+    pipeline_url: str,
+) -> None:
+    """Generates processing.json for the output folder."""
+    pipelines = [Code(url=pipeline_url, name=pipeline_name, version=pipeline_version)]
+    processing = Processing.create_with_sequential_process_graph(
         data_processes=data_processes,
-        processor_full_name=processor_full_name,
-        pipeline_version=pipeline_version,
-        pipeline_url="https://github.com/AllenNeuralDynamics/aind-smartspim-pipeline",
-        note="Metadata for classification step",
+        pipelines=pipelines,
+        notes="Classification metadata for SmartSPIM cell proposals",
     )
-
-    processing = Processing(
-        processing_pipeline=processing_pipeline,
-        notes="This processing only contains metadata of cell segmentation \
-            and needs to be compiled with other steps at the end",
-    )
-
     processing.write_standard_file(output_directory=dest_processing)
 
 
@@ -724,9 +722,7 @@ def print_system_information(logger: logging.Logger):
     logger.info(f"SLURM ID: {slurm_id}")
     logger.info(f"SLURM GPUs: {os.environ.get('SLURM_JOB_GPUS')}")
     logger.info(f"SLURM CPUs: {os.environ.get('SLURM_JOB_CPUS_PER_NODE')}")
-    logger.info(
-        f"SLURM variables {[( k, v ) for k, v in os.environ.items() if 'SLURM' in k]}"
-    )
+    logger.info(f"SLURM variables {[(k, v) for k, v in os.environ.items() if 'SLURM' in k]}")
 
     logger.info(f"{sep} System Information {sep}")
     uname = platform.uname()
@@ -741,9 +737,7 @@ def print_system_information(logger: logging.Logger):
     logger.info(f"{sep} Boot Time {sep}")
     boot_time_timestamp = psutil.boot_time()
     bt = datetime.fromtimestamp(boot_time_timestamp)
-    logger.info(
-        f"Boot Time: {bt.year}/{bt.month}/{bt.day} {bt.hour}:{bt.minute}:{bt.second}"
-    )
+    logger.info(f"Boot Time: {bt.year}/{bt.month}/{bt.day} {bt.hour}:{bt.minute}:{bt.second}")
 
     # CPU info
     logger.info(f"{sep} CPU Info {sep}")
@@ -834,7 +828,7 @@ def get_cpu_limit():
 
         container_cpus = cfs_quota_us // cfs_period_us
 
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         container_cpus = 0
 
     # For physical machine, the `cfs_quota_us` could be '-1'
@@ -913,9 +907,7 @@ def check_path_instance(obj: object) -> bool:
     return False
 
 
-def save_dict_as_json(
-    filename: str, dictionary: dict, verbose: Optional[bool] = False
-) -> None:
+def save_dict_as_json(filename: str, dictionary: dict, verbose: Optional[bool] = False) -> None:
     """
     Saves a dictionary as a json file.
 

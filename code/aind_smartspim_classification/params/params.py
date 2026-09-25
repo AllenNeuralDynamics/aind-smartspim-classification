@@ -27,13 +27,9 @@ class SegParams(ArgSchema):
         }
     )
 
-    input_channel = Str(
-        metadata={"required": True, "description": "Channel to segment"}
-    )
+    input_channel = Str(metadata={"required": True, "description": "Channel to segment"})
 
-    input_scale = Int(
-        metadata={"required": True, "description": "Zarr scale to start with"}
-    )
+    input_scale = Int(metadata={"required": True, "description": "Zarr scale to start with"})
 
     chunk_size = Int(
         metadata={
@@ -110,11 +106,7 @@ def get_yaml(yaml_path: PathLike):
         Dictionary with the yaml configuration
     """
 
-    config = None
-    try:
-        with open(yaml_path, "r") as stream:
-            config = yaml.safe_load(stream)
-    except Exception as error:
-        raise error
+    with open(yaml_path, "r") as stream:
+        config = yaml.safe_load(stream)
 
     return config
