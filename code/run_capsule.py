@@ -156,6 +156,7 @@ def set_up_pipeline_parameters(pipeline_config: dict, default_config: dict, chun
     default_config["channel"] = pipeline_config["segmentation"]["channel"]
     default_config["input_scale"] = pipeline_config["segmentation"]["input_scale"]
     default_config["chunk_size"] = int(chunk_size)
+    default_config["model"] = pipeline_config["segmentation"].get("model") or None
 
     return default_config
 
@@ -199,6 +200,53 @@ def get_detection_data(results_folder, dataset, channel, bucket="aind-open-data"
         f"aws s3 cp {s3_path} {results_folder}/cell_{channel}/ --recursive"
     ):
         logger.debug(out)
+
+
+def get_model(model_path: Path, model_name: str | None) -> dict:
+    """
+    Gets the model from the path provided
+    """
+
+    model_config_path = model_path.joinpath("config.json")
+
+    if not model_config_path.exists():
+        msg = (
+            f"Please, provide a config {model_config_path} in the detection models folder."
+        )
+        raise FileNotFoundError(msg)
+
+    model_config = utils.read_json_as_dict(str(model_config_path))
+
+    if model_name is None:
+        model_config["model"] = model_path.joinpath(
+            model_config["default_model"]
+        )
+    else:
+        model_file_path = next(model_path.glob(f"{model_name}/model.*"), None)
+
+        if model_file_path is None:
+            available = sorted({p.parent.name for p in model_path.glob("*/model.*")})
+            msg = (
+                f"Model '{model_name}' not found in {model_path}. "
+                f"Available models: {available}"
+            )
+            raise FileNotFoundError(msg)
+
+        model_config["model"] = model_file_path
+
+    model_metadata = utils.read_json_as_dict(
+        os.path.join(os.path.dirname(model_config["model"]), "metadata.json")
+    )
+
+    if not model_metadata:
+        msg = (
+            f"Please, provide a metadata.json in the model folder {os.path.dirname(model_config['model'])}."
+        )
+        raise FileNotFoundError(msg)
+    
+    model_config["metadata"] = model_metadata
+    
+    return model_config
 
 
 def downsample_cell_locations(coordinates: np.ndarray, downscale_factors: list):
@@ -373,30 +421,8 @@ def run():
             mode = str(sys.argv[1:])
             mode = mode.replace("[", "").replace("]", "").casefold()
 
-            # Getting inference model
-            model_config_path = smartspim_production_models.joinpath("config.json")
-
-            if not model_config_path.exists():
-                msg = (
-                    f"Please, provide a config {model_config_path} in the detection models folder."
-                )
-                raise FileNotFoundError(msg)
-
-            model_config = utils.read_json_as_dict(str(model_config_path))
-            model_config["default_model"] = smartspim_production_models.joinpath(
-                model_config["default_model"]
-            )
-
-            model_metadata = utils.read_json_as_dict(
-                os.path.join(os.path.dirname(model_config["default_model"]), "metadata.json")
-            )
-            model_config["metadata"] = model_metadata
-
             # Setting up configuration for inference
             default_config = dict()
-
-            default_config["model_config"] = model_config
-            logger.debug("Model config: %s", default_config)
 
             # add paths to default_config
             default_config["input_data"] = os.path.abspath(
@@ -420,6 +446,12 @@ def run():
             )
 
             smartspim_config["name"] = smartspim_dataset_name
+
+            # Get inference model config
+            smartspim_config["model_config"] = get_model(
+                model_path=smartspim_production_models,
+                model_name=smartspim_config.get("model")
+            )
 
             logger.debug("Final cell classification config: %s", smartspim_config)
 

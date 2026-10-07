@@ -331,7 +331,7 @@ def cell_classification(
     cube_width = model_config["parameters"]["cube_width"]
     cube_height = model_config["parameters"]["cube_height"]
     cube_depth = model_config["parameters"]["cube_depth"]
-    model_path = model_config["default_model"]
+    model_path = model_config["model"]
 
     # Load model defaults to inference mode
     model = keras.models.load_model(model_path)
