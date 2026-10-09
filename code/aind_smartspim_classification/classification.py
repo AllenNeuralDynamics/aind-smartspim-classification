@@ -42,6 +42,8 @@ from .__init__ import (
     __version__,
 )
 from ._shared.types import PathLike
+
+from .model import layers, losses  # noqa: F401
 from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
