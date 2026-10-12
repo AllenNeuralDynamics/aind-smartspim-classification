@@ -41,11 +41,129 @@ from scipy.signal import argrelmin
 from .._shared.types import PathLike
 
 
+def _read_cgroup_memory() -> dict:
+    """
+    Reads the memory accounting of the container from
+    the cgroup filesystem (v2 or v1). This is what the
+    OOM killer compares against the container limit.
+
+    Returns
+    -------
+    dict
+        Values in bytes for the keys 'used', 'limit',
+        'anon', 'file' and 'shmem' that could be read.
+    """
+    cgroup_root = Path("/sys/fs/cgroup")
+    layouts = [
+        # cgroup v2
+        (
+            cgroup_root,
+            "memory.current",
+            "memory.max",
+            {"anon": "anon", "file": "file", "shmem": "shmem"},
+        ),
+        # cgroup v1
+        (
+            cgroup_root.joinpath("memory"),
+            "memory.usage_in_bytes",
+            "memory.limit_in_bytes",
+            {"total_rss": "anon", "total_cache": "file", "total_shmem": "shmem"},
+        ),
+    ]
+
+    memory = {}
+    for folder, used_file, limit_file, stat_keys in layouts:
+        try:
+            memory["used"] = int(folder.joinpath(used_file).read_text())
+        except (OSError, ValueError):
+            continue
+
+        try:
+            memory["limit"] = int(folder.joinpath(limit_file).read_text())
+        except (OSError, ValueError):
+            # cgroup v2 reports 'max' when there is no limit
+            pass
+
+        try:
+            for line in folder.joinpath("memory.stat").read_text().splitlines():
+                key, _, value = line.partition(" ")
+                if key in stat_keys:
+                    memory[stat_keys[key]] = int(value)
+        except (OSError, ValueError):
+            pass
+
+        break
+
+    return memory
+
+
+def log_memory_usage(logger: logging.Logger, tag: str) -> None:
+    """
+    Logs the memory used by the process, its children
+    and the container, so an out of memory kill can be
+    traced in the logs.
+
+    Parameters
+    ----------
+    logger: logging.Logger
+        Logging object
+
+    tag: str
+        Name of the point in the code where the
+        memory is being logged.
+    """
+    gb = 1024**3
+
+    try:
+        process = psutil.Process()
+        process_memory = process.memory_info()
+        msg = f"[MEMORY] {tag} - process RSS: {process_memory.rss / gb:.2f}GB"
+
+        shared = getattr(process_memory, "shared", None)
+        if shared is not None:
+            msg += f" (shared: {shared / gb:.2f}GB)"
+
+        children_rss = 0
+        children = process.children(recursive=True)
+        for child in children:
+            try:
+                children_rss += child.memory_info().rss
+            except psutil.Error:
+                pass
+
+        msg += f" - children ({len(children)}) RSS: {children_rss / gb:.2f}GB"
+
+        cgroup_memory = _read_cgroup_memory()
+        if "used" in cgroup_memory:
+            msg += f" - container used: {cgroup_memory['used'] / gb:.2f}GB"
+
+            if "limit" in cgroup_memory:
+                msg += f" of {cgroup_memory['limit'] / gb:.2f}GB"
+
+            breakdown = [
+                f"{key}: {cgroup_memory[key] / gb:.2f}GB"
+                for key in ("anon", "file", "shmem")
+                if key in cgroup_memory
+            ]
+            if breakdown:
+                msg += f" ({', '.join(breakdown)})"
+
+        logger.info(msg)
+
+    except Exception as e:
+        logger.warning(f"[MEMORY] {tag} - Could not read memory usage: {e}")
+
+
 class ResourceMonitor:
     """Thread-based CPU/RAM/GPU resource monitor for DataProcess resource tracking."""
 
-    def __init__(self, interval_seconds: Optional[float] = 1.0):
+    def __init__(
+        self,
+        interval_seconds: Optional[float] = 1.0,
+        logger: Optional[logging.Logger] = None,
+    ):
         self._interval = interval_seconds
+        self._logger = logger
         self._cpu_usage: List[ResourceTimestamped] = []
         self._ram_usage: List[ResourceTimestamped] = []
         self._gpu_usage: List[ResourceTimestamped] = []
@@ -73,6 +191,8 @@ class ResourceMonitor:
                 handle = pynvml.nvmlDeviceGetHandleByIndex(0)
                 util = pynvml.nvmlDeviceGetUtilizationRates(handle)
                 self._gpu_usage.append(ResourceTimestamped(timestamp=now, usage=float(util.gpu)))
+            if self._logger is not None:
+                log_memory_usage(self._logger, "monitor")
             self._stop_event.wait(self._interval)
 
     def start(self) -> "ResourceMonitor":

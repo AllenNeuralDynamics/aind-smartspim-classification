@@ -169,6 +169,58 @@ def upsample_position(position: List[int], downsample_factor: Tuple[int]):
     return upsampled_z, upsampled_y, upsampled_x
 
 
+def normalize_blocks(
+    blocks: np.ndarray,
+    norm_type: str,
+    means: List[float],
+    standard_deviations: List[float],
+    p_range: List[float],
+):
+    """
+    Normalizes in place the two channels of a set of
+    blocks that will be classified.
+
+    Parameters
+    ----------
+    blocks: np.ndarray
+        Blocks with shape (N, X, Y, Z, 2).
+
+    norm_type: str
+        Normalization type. 'featurewise' or 'percentile'.
+
+    means: List[float]
+        Per channel means used in featurewise normalization.
+
+    standard_deviations: List[float]
+        Per channel STDs used in featurewise normalization.
+
+    p_range: List[float]
+        Low and high percentiles used in percentile normalization.
+    """
+    for channel_idx in range(2):
+        channel = blocks[..., channel_idx]
+
+        if norm_type == "featurewise":
+            channel -= means[channel_idx]
+            channel /= standard_deviations[channel_idx] + 1e-7
+
+        elif norm_type == "percentile":
+            # Compute percentiles for each individual block
+            p_low, p_high = np.percentile(channel, p_range, axis=(1, 2, 3), keepdims=True).astype(
+                blocks.dtype
+            )
+            p_span = p_high - p_low
+            valid = p_span > 0
+
+            # Normalize to [0, 1] range
+            channel -= p_low
+            channel /= np.where(valid, p_span, 1)
+            np.clip(channel, 0, 1, out=channel)
+
+            # Edge case: uniform patch
+            channel[~valid[:, 0, 0, 0]] = 0.5
+
+
 def cell_classification(
     smartspim_config: Dict,
     logger: logging.Logger,
@@ -216,7 +268,7 @@ def cell_classification(
         a single call. prediction_chunksize > super_chunksize.
     """
     start_date_time = datetime.now()
-    resource_monitor = utils.ResourceMonitor(interval_seconds=30.0).start()
+    resource_monitor = utils.ResourceMonitor(interval_seconds=30.0, logger=logger).start()
 
     data_processes = []
 
@@ -469,7 +521,9 @@ def cell_classification(
             logger.debug("No proposals found in %s!", global_pos_name)
 
         if curr_blocks >= max_blocks:  # and len(blocks_to_classify) == len(picked_proposals)
+            utils.log_memory_usage(logger, f"{curr_blocks} blocks collected")
             blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
+            utils.log_memory_usage(logger, "blocks stacked")
             picked_proposals = np.array(picked_proposals, dtype=np.uint32)
             picked_intensities = np.array(picked_intensities, dtype=np.float32)
 
@@ -485,26 +539,14 @@ def cell_classification(
             curr_cell_count = processed_cells - previous_cell_count
 
             if standardize:
-                for i in range(2):
-                    if norm_type == "featurewise":
-                        blocks_to_classify[:, :, :, :, i] -= means[i]
-                        blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
-                    elif norm_type == "percentile":
-                        for batch_idx in range(blocks_to_classify.shape[0]):
-                            sample = blocks_to_classify[batch_idx, :, :, :, i]
-
-                            # Compute percentiles for this individual sample
-                            p_low, p_high = np.percentile(sample, p_range)
-
-                            # Normalize to [0, 1] range
-                            if p_high > p_low:
-                                sample_norm = (sample - p_low) / (p_high - p_low)
-                                sample_norm = np.clip(sample_norm, 0, 1)
-                            else:
-                                # Edge case: uniform patch
-                                sample_norm = np.ones_like(sample) * 0.5
-
-                            blocks_to_classify[batch_idx, :, :, :, i] = sample_norm
+                normalize_blocks(
+                    blocks=blocks_to_classify,
+                    norm_type=norm_type,
+                    means=means,
+                    standard_deviations=standard_deviations,
+                    p_range=p_range,
+                )
+                utils.log_memory_usage(logger, "blocks normalized")
 
                 logger.info(f"Normalized signal mean: {np.mean(blocks_to_classify[:, :, :, :, 0])}")
                 logger.info(f"Normalized signal STD {np.std(blocks_to_classify[:, :, :, :, 0])}")
@@ -516,7 +558,9 @@ def cell_classification(
                     f"Normalized background STD {np.std(blocks_to_classify[:, :, :, :, 1])}"
                 )
 
+            utils.log_memory_usage(logger, "before prediction")
             predictions_raw = model.predict(blocks_to_classify, batch_size=1024)
+            utils.log_memory_usage(logger, "after prediction")
 
             if predictions_raw.shape[0] != blocks_to_classify.shape[0]:
                 error = (
@@ -569,11 +613,14 @@ def cell_classification(
             logger.info(
                 f"[PROGRESS] Total of cells at this point: {processed_cells} - Restarted vars - blocks: {len(blocks_to_classify)} proposals: {len(picked_proposals)}"
             )
+            utils.log_memory_usage(logger, "blocks released")
 
     logger.info(f"Number of blocks left to process: {curr_blocks}")
 
     if curr_blocks:
+        utils.log_memory_usage(logger, f"{curr_blocks} blocks collected")
         blocks_to_classify = np.array(blocks_to_classify, dtype=np.float32)
+        utils.log_memory_usage(logger, "blocks stacked")
         picked_proposals = np.array(picked_proposals, dtype=np.uint32)
         picked_intensities = np.array(picked_intensities, dtype=np.float32)
 
@@ -589,26 +636,13 @@ def cell_classification(
         curr_cell_count = processed_cells - previous_cell_count
 
         if standardize:
-            for i in range(2):
-                if norm_type == "featurewise":
-                    blocks_to_classify[:, :, :, :, i] -= means[i]
-                    blocks_to_classify[:, :, :, :, i] /= standard_deviations[i] + 1e-7
-                elif norm_type == "percentile":
-                    for batch_idx in range(blocks_to_classify.shape[0]):
-                        sample = blocks_to_classify[batch_idx, :, :, :, i]
-
-                        # Compute percentiles for this individual sample
-                        p_low, p_high = np.percentile(sample, p_range)
-
-                        # Normalize to [0, 1] range
-                        if p_high > p_low:
-                            sample_norm = (sample - p_low) / (p_high - p_low)
-                            sample_norm = np.clip(sample_norm, 0, 1)
-                        else:
-                            # Edge case: uniform patch
-                            sample_norm = np.ones_like(sample) * 0.5
-
-                        blocks_to_classify[batch_idx, :, :, :, i] = sample_norm
+            normalize_blocks(
+                blocks=blocks_to_classify,
+                norm_type=norm_type,
+                means=means,
+                standard_deviations=standard_deviations,
+                p_range=p_range,
+            )
 
         predictions_raw = model.predict(blocks_to_classify, batch_size=1024)
 

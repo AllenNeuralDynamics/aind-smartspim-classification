@@ -234,6 +234,12 @@ def get_model(model_path: Path, model_name: str | None) -> dict:
 
         model_config["model"] = model_file_path
 
+    logger.info(
+        "Using %s model: %s",
+        "default" if model_name is None else f"selected '{model_name}'",
+        model_config["model"],
+    )
+
     model_metadata = utils.read_json_as_dict(
         os.path.join(os.path.dirname(model_config["model"]), "metadata.json")
     )
