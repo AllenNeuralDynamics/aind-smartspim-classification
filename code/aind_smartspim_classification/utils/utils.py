@@ -44,8 +44,7 @@ from .._shared.types import PathLike
 def _read_cgroup_memory() -> dict:
     """
     Reads the memory accounting of the container from
-    the cgroup filesystem (v2 or v1). This is what the
-    OOM killer compares against the container limit.
+    the cgroup filesystem (v2 or v1).
 
     Returns
     -------
