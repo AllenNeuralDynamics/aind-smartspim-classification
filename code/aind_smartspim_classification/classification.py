@@ -48,6 +48,10 @@ from .utils import utils
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
+# Seconds between CPU/RAM samples stored in processing.json for this step.
+# Keep large: every sample adds 360 B to the file (target < 100 KB total).
+RESOURCE_MONITOR_INTERVAL_SECONDS = 600.0
+
 
 def extract_centered_3d_block(
     big_block: np.array,
@@ -268,7 +272,9 @@ def cell_classification(
         a single call. prediction_chunksize > super_chunksize.
     """
     start_date_time = datetime.now()
-    resource_monitor = utils.ResourceMonitor(interval_seconds=30.0, logger=logger).start()
+    resource_monitor = utils.ResourceMonitor(
+        interval_seconds=RESOURCE_MONITOR_INTERVAL_SECONDS, logger=logger
+    ).start()
 
     data_processes = []
 
