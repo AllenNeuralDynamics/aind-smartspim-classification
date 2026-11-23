@@ -224,6 +224,11 @@ def normalize_blocks(
             # Edge case: uniform patch
             channel[~valid[:, 0, 0, 0]] = 0.5
 
+        else:
+            raise ValueError(
+                f"Unknown norm_type '{norm_type}'. Expected 'featurewise' or 'percentile'."
+            )
+
 
 def cell_classification(
     smartspim_config: Dict,
